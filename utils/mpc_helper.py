@@ -231,6 +231,26 @@ class MPCBinningComputer:
             with open(party_file, 'r') as f:
                 party_sizes.append(sum(1 for _ in f) - 1)  # Subtract header
 
+        # Prepare MPC input files (raw data as secret shares)
+        player_data_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+        os.makedirs(player_data_dir, exist_ok=True)
+
+        print(f"Preparing MPC input files in {player_data_dir}...")
+        for party_idx, party_file in enumerate(party_data_files):
+            import pandas as pd
+            df = pd.read_csv(party_file)
+
+            # Convert to numpy array (all numeric)
+            data_array = df.values
+
+            # Write in MP-SPDZ input format (space-separated values)
+            input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
+            with open(input_file, 'w') as f:
+                for row in data_array:
+                    f.write(' '.join([str(float(val)) for val in row]) + '\n')
+
+            print(f"  Party {party_idx}: {len(data_array)} rows → {input_file}")
+
         # Prepare MPC arguments
         args = party_sizes + [num_genes, num_classes]
 
