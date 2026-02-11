@@ -30,12 +30,13 @@ class MPCProtocolExecutor:
         self.protocol = protocol
         self.working_dir = working_dir or os.getcwd()
 
-    def compile_protocol(self, mpc_file):
+    def compile_protocol(self, mpc_file, args=None):
         """
         Compile .mpc protocol file using MP-SPDZ compiler
 
         Args:
             mpc_file: Path to .mpc file to compile
+            args: Optional list of compile-time arguments
 
         Returns:
             bool: True if compilation successful
@@ -45,7 +46,12 @@ class MPCProtocolExecutor:
         if not os.path.exists(compile_script):
             raise FileNotFoundError(f"MP-SPDZ compile.py not found at {compile_script}")
 
-        cmd = [compile_script, mpc_file]
+        # MP-SPDZ compile command with ring protocol support
+        cmd = [compile_script, '-R', '64', mpc_file]
+
+        # Add compile-time arguments if provided (needed for program.args)
+        if args:
+            cmd.extend([str(arg) for arg in args])
 
         try:
             result = subprocess.run(
@@ -216,9 +222,6 @@ class MPCBinningComputer:
         print(f"Using MPC binning protocol: {mpc_protocol_file}")
         print("SECURITY: Raw data will never be revealed - all binning done in MPC")
 
-        # Compile MPC protocol
-        self.executor.compile_protocol(mpc_protocol_file)
-
         # Extract protocol name
         protocol_name = Path(mpc_protocol_file).stem
 
@@ -228,8 +231,12 @@ class MPCBinningComputer:
             with open(party_file, 'r') as f:
                 party_sizes.append(sum(1 for _ in f) - 1)  # Subtract header
 
-        # Execute MPC protocol with arguments
+        # Prepare MPC arguments
         args = party_sizes + [num_genes, num_classes]
+
+        print(f"Compiling MPC protocol with arguments: {args}")
+        # Compile MPC protocol WITH arguments (needed for program.args)
+        self.executor.compile_protocol(mpc_protocol_file, args=args)
 
         print(f"Executing MPC binning with {len(party_sizes)} parties...")
         print(f"Party sizes: {party_sizes}")
@@ -304,9 +311,6 @@ class MPCMarginalComputer:
         print(f"Using MPC marginal protocol: {mpc_protocol_file}")
         print("SECURITY: Computing marginals securely - raw data never revealed")
 
-        # Compile MPC protocol
-        self.executor.compile_protocol(mpc_protocol_file)
-
         # Extract protocol name from file path
         protocol_name = Path(mpc_protocol_file).stem
 
@@ -316,8 +320,12 @@ class MPCMarginalComputer:
             for f in party_data_files
         )
 
-        # Execute MPC protocol with arguments
+        # Prepare MPC arguments
         args = [n_samples, num_genes, num_classes]
+
+        print(f"Compiling MPC protocol with arguments: {args}")
+        # Compile MPC protocol WITH arguments (needed for program.args)
+        self.executor.compile_protocol(mpc_protocol_file, args=args)
 
         print(f"Executing MPC marginal computation...")
         print(f"Total samples (public): {n_samples}")
