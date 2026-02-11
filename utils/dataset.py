@@ -30,39 +30,26 @@ def inf_train_gen(trainloader):
 
 class AML(Dataset):
     def __init__(self, dset_dir, preprocess="none", if_filter_x=True, **kwargs):
+        df = pd.read_csv("/home/daniilf/PRO-GENE-GEN/data/aml/counts_with_who2022_train_subset.csv")
+        # df = pd.read_csv("/home/daniilf/mbi/mechanisms/randomly_subset_100f_from_train.csv")
+        # Separate the label and features
+        self.anno = df["WHO_2022"].tolist()
+        data_df = df.drop(columns=["WHO_2022"]).select_dtypes(include=[np.number])
 
-        dset_path = os.path.join(dset_dir, "aml/norm_counts_AML.txt")
-        anno_path = os.path.join(dset_dir, "aml/annotation_AML.txt")
-        landmark_path = os.path.join(dset_dir, "aml/L1000_landmark_gene_list.txt")
-
-        data_df = pd.read_csv(dset_path, sep="\t", header=0, index_col=0)
-        data_df = data_df.T
-        self.classes = ["ALL", "AML", "CLL", "CML"]  # label classes
+        self.classes = list(set(self.anno)) # Automatically detect classes
         self.preprocess = preprocess
 
-        ### select important genes
+        # Handle landmark filtering if enabled
         if if_filter_x:
+            # landmark_path = os.path.join(dset_dir, "aml/L1000_landmark_gene_list.txt")
+            # landmark_path = "/home/daniilf/mbi/mechanisms/top_100_genes_lr.txt"
+            landmark_path = "/home/daniilf/mbi/mechanisms/shared_genes.txt"
             landmark = pd.read_csv(landmark_path, delimiter="\t")
             genes = landmark["gene"].to_numpy()
-            column_names = [x for x in data_df.columns if (x in genes)]
-            extract_dset = data_df.loc[:, column_names]
-            self.column_names = np.array(column_names)
-            self.dset = extract_dset.values
-        else:
-            self.column_names = np.array(data_df.columns)
-            self.dset = data_df.values
-
-        ### load labels
-        self.anno = []
-        with open(anno_path) as f:
-            f.readline()  # Discard the header manually.
-            # Each line consists of Dataset, GSE, Condition, Disease, Tissue, FAB, and Filename
-            for line in f.readlines():
-                line = line.strip()
-                label = line.split("\t")[-4]  # Get the Disease label
-                if label not in self.classes:  # convert to 5 classes setting
-                    label = "Other"
-                self.anno.append(label)
+            column_names = [x for x in data_df.columns if x in genes]
+            data_df = data_df[column_names]
+        self.column_names = np.array(data_df.columns)
+        self.dset = data_df.values.astype(float)
 
         ### encode labels
         label_encoder = LabelEncoder()

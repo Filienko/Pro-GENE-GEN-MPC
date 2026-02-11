@@ -1,0 +1,115 @@
+import math
+import numpy as np
+import random
+from Compiler import ml
+
+####### Takes integer inputs
+
+N = int(program.args[1])  #945
+num_genes = int(program.args[2]) #958
+num_classes = int(program.args[3]) #5
+epsilon = 5 #int(program.args[4])  #5
+num_data_custodians = 2
+data = sfix.Matrix(N,num_genes+1)   
+data.input_from(0)
+
+########## Compute 1-way marginals optimized
+real_counts = sfix.Matrix(num_genes, 4)
+real_counts_l = sfix.Array(num_classes)
+
+for i in range(N):
+    for j in range(num_genes):
+        val_r = data[i][j]  
+
+        # 1-way marginals for gene j
+        real_counts[j][0] = real_counts[j][0] + (1 - val_r) * (2 - val_r) * (3 - val_r) / 6
+        real_counts[j][1] = real_counts[j][1] + val_r * (2 - val_r) * (3 - val_r) / 2
+        real_counts[j][2] = real_counts[j][2] + val_r * (val_r - 1) * (3 - val_r) / 2
+        real_counts[j][3] = real_counts[j][3] + val_r * (val_r - 1) * (val_r - 2) / 6
+
+    val_s = data[i][num_genes]
+    real_counts_l[0] = real_counts_l[0] + (val_s - 1) * (val_s - 2) * (val_s - 3) * (val_s - 4) / 24  # (val_s == 0)
+    real_counts_l[1] = real_counts_l[1] + (val_s - 0) * (val_s - 2) * (val_s - 3) * (val_s - 4) / 6   # (val_s == 1)
+    real_counts_l[2] = real_counts_l[2] + (val_s - 0) * (val_s - 1) * (val_s - 3) * (val_s - 4) / 2   # (val_s == 2)
+    real_counts_l[3] = real_counts_l[3] + (val_s - 0) * (val_s - 1) * (val_s - 2) * (val_s - 4) / 6   # (val_s == 3)
+    real_counts_l[4] = real_counts_l[3] + (val_s - 0) * (val_s - 1) * (val_s - 2) * (val_s - 3) / 24  # (val_s == 4)
+
+########## Compute 2-way marginals optimized
+real_counts_2way = sfix.Matrix(num_genes, 20)  # Flattened matrix: 4 feature vals * 5 label vals
+
+for i in range(N):
+    val_s = data[i][num_genes]  
+    
+    
+    label_is = sfix.Array(5)
+    label_is[0] = (val_s - 1) * (val_s - 2) * (val_s - 3) * (val_s - 4) / 24  # (val_s == 0)
+    label_is[1] = (val_s - 0) * (val_s - 2) * (val_s - 3) * (val_s - 4) / 6   # (val_s == 1)
+    label_is[2] = (val_s - 0) * (val_s - 1) * (val_s - 3) * (val_s - 4) / 2   # (val_s == 2)
+    label_is[3] = (val_s - 0) * (val_s - 1) * (val_s - 2) * (val_s - 4) / 6   # (val_s == 3)
+    label_is[4] = (val_s - 0) * (val_s - 1) * (val_s - 2) * (val_s - 3) / 24  # (val_s == 4)
+    
+    for j in range(num_genes):
+        val_r = data[i][j]  
+        
+        gene_is = sfix.Array(4)
+        gene_is[0] = (1 - val_r) * (2 - val_r) * (3 - val_r) / 6       # (val_r == 0)
+        gene_is[1] = val_r * (2 - val_r) * (3 - val_r) / 2             # (val_r == 1)
+        gene_is[2] = val_r * (val_r - 1) * (3 - val_r) / 2             # (val_r == 2)
+        gene_is[3] = val_r * (val_r - 1) * (val_r - 2) / 6             # (val_r == 3)
+        
+        for f in range(4):  # feature values
+            for l in range(5):  # label values
+                idx = j * 20 + f * 5 + l
+                real_counts_2way[idx] = real_counts_2way[idx] + gene_is[f] * label_is[l]
+
+
+
+target_delta = 1e-5
+sigma = 1.349069114347003 # wil be computed in clear by one of the MPC servers)
+
+####### Noisy 1-way marginals
+if target_delta > 0:
+    # add guassian noise
+    # Weights
+    w = [0.03229168418603133] * (num_genes + 1) #[1] * (num_genes + 1), then l2 norm = 1, one MPC server can compute this as lens are public
+    for i in range(num_genes):
+       for k in range(k):
+           real_counts[i][j] = real_counts[i][j] * w[i] + sigma * compute_guassian()
+    for i in range(num_classes):
+           real_counts_l[i] = real_counts[i] * w[i] + sigma * compute_guassian()    
+else:
+    # add lapalce noise
+    for i in range(num_genes):
+       for k in range(k):
+           real_counts[i][j] = real_counts[i][j] + compute_laplace(sigma)  #np.random.laplace(loc=0, scale=sigma, size=x.size)
+    for i in range(num_classes):
+           real_counts_l[i] = real_counts[i] + compute_laplace(sigma)
+
+
+
+
+#num_cliques = num_genes #one MPC server can compute this as lens are public
+
+
+####### Noisy 2-way marginals
+if self.target_delta == 0:
+            sigma = 1.0 / num_cliques / 2.0
+
+if target_delta > 0:
+    # add guassian noise
+    # Weights
+    w = [0.03230853348756192] * num_genes #[1] * (num_genes + 1), then l2 norm = 1, one MPC server can compute this as lens are public
+    for i in range(num_genes):
+       for k in range(20):
+           real_counts_2way[i][j] = real_counts_2way[i][j] * w[i] + sigma * compute_guassian()
+
+else:
+    # add lapalce noise
+    for i in range(num_genes):
+       for k in range(20):
+           real_counts_2way[i][j] = real_counts_2way[i][j] + compute_laplace(sigma)  #np.random.laplace(loc=0, scale=sigma, size=x.size)
+
+
+
+
+

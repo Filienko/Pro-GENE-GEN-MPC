@@ -13,3 +13,6 @@ eval/eval_data
 eval/plots
 eval/stats_eval/margctgan
 eval/stats_eval/results
+
+*.csv
+*.zip

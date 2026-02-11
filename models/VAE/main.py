@@ -41,7 +41,7 @@ def parse_arguments():
         "-data",
         type=str,
         default="aml",
-        choices=["aml"],
+        choices=["aml", "bulk_aml"],
         help="dataset name",
     )
     parser.add_argument(
@@ -243,11 +243,12 @@ def main():
     save_path = os.path.join(save_dir, "model.pkt")
 
     ### Load data
-    if args.dataset == "aml":
+    if "aml" in args.dataset:
         dset = AML(
             dset_dir,
             preprocess=args.preprocess,
             if_filter_x=args.if_filter_x,
+            dataset_name=args.dataset,
             **args.preprocess_arg,
         )
         eval_model_type = (
@@ -277,7 +278,7 @@ def main():
         valid_x, valid_y = test_x, test_y
         print("test dataset size = valid dataset size: %d" % len(valid_x))
 
-    if args.if_verbose:
+    if args.if_evaluate and args.if_verbose:
         ref_acc = Eval(valid_x, valid_y, model_type=eval_model_type).efficacy(
             train_x, train_y, seed=args.random_seed
         )
@@ -405,6 +406,16 @@ def main():
                 fake_label,
                 dset.column_names,
             )
+            original_string_labels = [dset.label_map[int(l)] for l in fake_label]
+            save_data_csv(
+                os.path.join(
+                    save_dir, f"samples/k{args.split_seed}_s{args.random_seed}_w_label.csv"
+                ),
+                dset._inverse_transform(fake_data),
+                original_string_labels, # Use the string labels here
+                dset.column_names,
+            )
+
         return
 
     ### DP optimizer
@@ -448,7 +459,7 @@ def main():
         opt.step()
 
         ### Evaluation
-        if args.if_verbose:
+        if args.if_evaluate and args.if_verbose:
             if iters % args.eval_iter == 0 or (iters < 200 and iters % 50 == 0):
                 fake_data, fake_label = model.sample(
                     len(dset), loader, args.if_uniform_y, device=device
@@ -509,7 +520,6 @@ def main():
             if loss < min_loss:
                 min_loss = loss
                 torch.save(model.state_dict(), save_path)
-
         if args.if_verbose:
             ### Plot results during training
             logger.plot(["Loss Rec"], x="Iter")
@@ -523,7 +533,7 @@ def main():
 
             logger.plot(["Real Distance", "Fake Distance"], x="Iter")
             savefig(os.path.join(save_dir, "distance.png"))
-
+    print("Plotting Results")
     if args.if_verbose:
         ### Plot all results
         logger.close()

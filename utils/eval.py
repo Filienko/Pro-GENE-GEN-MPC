@@ -84,7 +84,7 @@ class Eval:
                 train_label,
                 test_size=subset,
                 random_state=seed,
-                stratify=train_label,
+                stratify=None,
             )
 
         self.model.fit(train_data, train_label)

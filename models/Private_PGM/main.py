@@ -37,7 +37,7 @@ def parse_arguments():
         "-data",
         type=str,
         default="aml",
-        choices=["aml", "mouse"],
+        choices=["aml", "mouse", "bulk_aml"],
         help="dataset name",
     )
     parser.add_argument(
@@ -161,7 +161,7 @@ def main():
 
     ### Load data
     dset_dir = DATA_DIR
-    if args.dataset == "aml":
+    if "aml" in args.dataset:
         dset = AML(
             dset_dir,
             preprocess=args.preprocess,
@@ -182,6 +182,7 @@ def main():
         )
     else:
         test_x, test_y = dset.dset, dset.anno
+    print("Class distribution in training data:", pd.Series(train_y).value_counts())
     print("size of train dataset: %d" % len(dset))
     eval_subset = int(args.eval_frac * len(test_x))
     if args.if_valid:
@@ -247,7 +248,15 @@ def main():
             fake_label_,
             dset.column_names,
         )
+        who_2022_labels = [dset.label_map[int(l)] for l in fake_label_]
 
+        save_data_csv(
+            os.path.join(save_dir, f"samples/k{args.split_seed}_s{args.random_seed}_labeled.csv"),
+            dset._inverse_transform(fake_data_),
+            who_2022_labels, # Use the string labels
+            dset.column_names,
+            label_name="WHO_2022"
+        )
         real_acc = Eval(fake_data_, fake_label_, model_type=eval_model_type).efficacy(
             test_x, test_y
         )
