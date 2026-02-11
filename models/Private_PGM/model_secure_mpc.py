@@ -31,7 +31,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 from utils.rdp_accountant import compute_rdp, get_privacy_spent
-from mbi import Dataset, FactoredInference, Domain
+from mbi import FactoredInference, Domain
+from utils.mpc_helper import MPCMarginalComputer, MPCBinningComputer
 
 
 class SecureMPCPrivatePGM:
@@ -67,56 +68,25 @@ class SecureMPCPrivatePGM:
         self.mpc_protocol = mpc_protocol
         self.num_parties = num_parties
 
-        # Validate MPC configuration
-        self.use_simulation = False
+        # Convert to absolute path for robust checking
+        abs_mpspdz_path = os.path.abspath(mpspdz_path)
 
-        if not mpspdz_path:
-            print("⚠️  WARNING: No mpspdz_path provided - using SIMULATION mode")
-            self.use_simulation = True
+        if not os.path.exists(abs_mpspdz_path):
+            print(f"⚠️  WARNING: MP-SPDZ directory not found at {abs_mpspdz_path}")
+            exit(1)  # For secure MPC, we require MP-SPDZ. Exit if not found.
         else:
-            # Convert to absolute path for robust checking
-            abs_mpspdz_path = os.path.abspath(mpspdz_path)
-            compile_py = os.path.join(abs_mpspdz_path, 'compile.py')
-            scripts_dir = os.path.join(abs_mpspdz_path, 'Scripts')
+            # Update to use absolute path
+            self.mpspdz_path = abs_mpspdz_path
 
-            if not os.path.exists(abs_mpspdz_path):
-                print(f"⚠️  WARNING: MP-SPDZ directory not found at {abs_mpspdz_path}")
-                print("   Falling back to SIMULATION mode")
-                self.use_simulation = True
-            elif not os.path.isfile(compile_py):
-                print(f"⚠️  WARNING: compile.py not found at {compile_py}")
-                print("   MP-SPDZ installation appears incomplete")
-                print("   Falling back to SIMULATION mode")
-                self.use_simulation = True
-            elif not os.path.isdir(scripts_dir):
-                print(f"⚠️  WARNING: Scripts/ directory not found at {scripts_dir}")
-                print("   MP-SPDZ installation appears incomplete")
-                print("   Falling back to SIMULATION mode")
-                self.use_simulation = True
-            else:
-                # Update to use absolute path
-                self.mpspdz_path = abs_mpspdz_path
+        self.mpc_binner = MPCBinningComputer(
+            mpspdz_path=self.mpspdz_path,
+            protocol=self.mpc_protocol
+        )
 
-        # Initialize MPC helpers
-        if self.use_simulation:
-            from utils.mpc_simulation import (
-                SimulatedMPCBinner,
-                SimulatedMPCMarginalComputer,
-                create_simulation_mode_warning
-            )
-            create_simulation_mode_warning()
-            self.mpc_binner = SimulatedMPCBinner(add_noise=True)
-            self.mpc_computer = SimulatedMPCMarginalComputer(add_noise=True)
-        else:
-            from utils.mpc_helper import MPCMarginalComputer, MPCBinningComputer
-            self.mpc_computer = MPCMarginalComputer(
-                mpspdz_path=self.mpspdz_path,
-                protocol=self.mpc_protocol
-            )
-            self.mpc_binner = MPCBinningComputer(
-                mpspdz_path=self.mpspdz_path,
-                protocol=self.mpc_protocol
-            )
+        self.mpc_computer = MPCMarginalComputer(
+            mpspdz_path=self.mpspdz_path,
+            protocol=self.mpc_protocol
+        )
 
         # Privacy budget allocation
         self.epsilon_binning = target_epsilon / 2  # Half budget for binning
@@ -250,61 +220,37 @@ class SecureMPCPrivatePGM:
         print("STEP 1: SECURE MPC BINNING")
         print("-"*80)
 
-        if self.use_simulation:
-            print("Using SIMULATION mode (no MP-SPDZ)")
-            binned_df, self.noisy_bin_means = self.mpc_binner.bin_data_simulated(
-                party_data_files=party_data_files,
-                num_genes=num_genes,
-                num_classes=num_classes,
-                epsilon=self.epsilon_binning,
-                delta=self.delta_binning
-            )
-            print(f"✓ Binning completed with DP protection")
-        else:
-            print("Using REAL MPC mode (MP-SPDZ)")
-            print("Raw data never revealed - all binning done in MPC")
-            binned_data_file, noisy_bin_means_file = self.mpc_binner.bin_data_mpc(
-                party_data_files=party_data_files,
-                num_genes=num_genes,
-                num_classes=num_classes,
-                mpc_protocol_file=bin_protocol
-            )
-            print(f"✓ Binning completed securely")
-            print(f"  Output: {binned_data_file} (discrete bins)")
-            print(f"  Noisy means: {noisy_bin_means_file} (DP-protected)")
-            # Store noisy bin means for later inverse binning
-            self.noisy_bin_means = self._load_bin_means(noisy_bin_means_file)
-            # Load binned data
-            binned_df = pd.read_csv(binned_data_file)
+        print("Using REAL MPC mode (MP-SPDZ)")
+        print("Raw data never revealed - all binning done in MPC")
+        binned_data_file, noisy_bin_means_file = self.mpc_binner.bin_data_mpc(
+            party_data_files=party_data_files,
+            num_genes=num_genes,
+            num_classes=num_classes,
+            mpc_protocol_file=bin_protocol
+        )
+        print(f"✓ Binning completed securely")
+        print(f"  Output: {binned_data_file} (discrete bins)")
+        print(f"  Noisy means: {noisy_bin_means_file} (DP-protected)")
+        # Store noisy bin means for later inverse binning
+        self.noisy_bin_means = self._load_bin_means(noisy_bin_means_file)
 
         # STEP 2: MPC Marginal Computation (with DP noise)
         print("\n" + "-"*80)
         print("STEP 2: SECURE MPC MARGINAL COMPUTATION")
         print("-"*80)
 
-        if self.use_simulation:
-            print("Using SIMULATION mode (no MP-SPDZ)")
-            marginals_1way, marginals_2way = self.mpc_computer.compute_marginals_simulated(
-                binned_df=binned_df,
-                num_genes=num_genes,
-                num_classes=num_classes,
-                epsilon=self.epsilon_marginals,
-                delta=self.delta_marginals,
-                target_variable=self.target_variable
-            )
-        else:
-            print("Using REAL MPC mode (MP-SPDZ)")
-            print("Computing marginals securely with DP noise")
-            # For marginal computation, we need to provide the binned data files
-            # (which are still secret-shared in MPC)
-            marginals_1way, marginals_2way = self.mpc_computer.compute_marginals_from_party_files(
-                party_data_files=[binned_data_file],  # Already binned in MPC
-                num_genes=num_genes,
-                num_classes=num_classes,
-                target_delta=self.target_delta,
-                sigma=sigma_marginal,
-                mpc_protocol_file=marginal_protocol
-            )
+        print("Using REAL MPC mode (MP-SPDZ)")
+        print("Computing marginals securely with DP noise")
+        # For marginal computation, we need to provide the binned data files
+        # (which are still secret-shared in MPC)
+        marginals_1way, marginals_2way = self.mpc_computer.compute_marginals_from_party_files(
+            party_data_files=[binned_data_file], 
+            num_genes=num_genes,
+            num_classes=num_classes,
+            target_delta=self.target_delta,
+            sigma=sigma_marginal,
+            mpc_protocol_file=marginal_protocol
+        )
 
         print(f"✓ Marginals computed with DP protection")
         print(f"  1-way marginals: {len(marginals_1way)} values (noisy)")
