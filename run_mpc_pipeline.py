@@ -1,12 +1,23 @@
 """
 Complete MPC Pipeline for Private-PGM
 
-This script demonstrates the full end-to-end workflow using all MPC protocols:
-1. Data preparation and splitting
-2. MPC-based binning (ppai_bin_opt.mpc)
-3. MPC-based marginal computation (ppai_msr_noisy_final)
-4. Model training and synthesis
-5. Inverse binning to continuous values
+⚠️ WARNING: THIS VERSION HAS DATA LEAKAGE ISSUES ⚠️
+
+This script uses local discretization which reveals raw data.
+For secure MPC with no data leakage, use run_secure_mpc_pipeline.py instead.
+
+SECURITY ISSUES:
+- Local discretization exposes raw data
+- Data splitting done before MPC
+- Bin means computed without DP protection
+
+For production use with real sensitive data, use:
+    python run_secure_mpc_pipeline.py --party_files party_0.csv party_1.csv
+
+This script is kept for:
+- Testing and development
+- Comparing with secure version
+- Non-sensitive datasets
 
 Usage:
     python run_mpc_pipeline.py --data_path data/your_data.csv --use_mpc

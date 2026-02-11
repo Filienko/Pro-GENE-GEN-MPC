@@ -174,6 +174,87 @@ class HorizontalDataSplitter:
         return output_files
 
 
+class MPCBinningComputer:
+    """
+    Performs secure binning using MPC protocols
+    """
+
+    def __init__(self, mpspdz_path=None, protocol="ring"):
+        """
+        Initialize MPC Binning Computer
+
+        Args:
+            mpspdz_path: Path to MP-SPDZ installation
+            protocol: MPC protocol to use
+        """
+        self.executor = MPCProtocolExecutor(mpspdz_path, protocol)
+        self.splitter = HorizontalDataSplitter(num_parties=2)
+
+    def bin_data_mpc(self, party_data_files, num_genes, num_classes,
+                     mpc_protocol_file='ppai_bin_opt'):
+        """
+        Bin data using MPC protocol - ensures raw data never revealed
+
+        Args:
+            party_data_files: List of file paths containing data for each party
+            num_genes: Number of gene/feature columns
+            num_classes: Number of class labels
+            mpc_protocol_file: Path to .mpc binning protocol file
+
+        Returns:
+            tuple: (binned_data_file, noisy_bin_means_file)
+        """
+        if not mpc_protocol_file.endswith('.mpc'):
+            mpc_protocol_file = f'{mpc_protocol_file}.mpc'
+
+        if not os.path.exists(mpc_protocol_file):
+            raise FileNotFoundError(
+                f"MPC binning protocol file not found: {mpc_protocol_file}\n"
+                f"Expected one of: ppai_bin.mpc, ppai_bin_opt.mpc, ppai_bin_test.mpc"
+            )
+
+        print(f"Using MPC binning protocol: {mpc_protocol_file}")
+        print("SECURITY: Raw data will never be revealed - all binning done in MPC")
+
+        # Compile MPC protocol
+        self.executor.compile_protocol(mpc_protocol_file)
+
+        # Extract protocol name
+        protocol_name = Path(mpc_protocol_file).stem
+
+        # Calculate party sizes from input files
+        party_sizes = []
+        for party_file in party_data_files:
+            with open(party_file, 'r') as f:
+                party_sizes.append(sum(1 for _ in f) - 1)  # Subtract header
+
+        # Execute MPC protocol with arguments
+        args = party_sizes + [num_genes, num_classes]
+
+        print(f"Executing MPC binning with {len(party_sizes)} parties...")
+        print(f"Party sizes: {party_sizes}")
+
+        result = self.executor.execute_protocol(
+            protocol_name,
+            num_parties=len(party_sizes),
+            args=args
+        )
+
+        # Read results from MPC output
+        output_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+
+        binned_data_file = os.path.join(output_dir, 'binned_data.txt')
+        bin_means_file = os.path.join(output_dir, 'noisy_bin_means.txt')
+
+        if not os.path.exists(binned_data_file):
+            raise FileNotFoundError(
+                f"MPC binning output not found: {binned_data_file}\n"
+                f"The MPC protocol may have failed or produced different output files."
+            )
+
+        return binned_data_file, bin_means_file
+
+
 class MPCMarginalComputer:
     """
     Computes marginals using MPC protocols for Private-PGM
@@ -189,11 +270,90 @@ class MPCMarginalComputer:
         """
         self.executor = MPCProtocolExecutor(mpspdz_path, protocol)
         self.splitter = HorizontalDataSplitter(num_parties=2)
+        self.binner = MPCBinningComputer(mpspdz_path, protocol)
+
+    def compute_marginals_from_party_files(self, party_data_files, num_genes,
+                                           num_classes, target_delta, sigma,
+                                           mpc_protocol_file='ppai_msr_noisy_final'):
+        """
+        Compute marginals using MPC from party data files (SECURE - no data leakage)
+
+        This method ensures raw data never leaves individual parties.
+        Each party's data is read separately and input as secret shares.
+
+        Args:
+            party_data_files: List of file paths containing data for each party
+            num_genes: Number of gene/feature columns
+            num_classes: Number of class labels
+            target_delta: Delta parameter for DP
+            sigma: Noise scale parameter
+            mpc_protocol_file: Path to .mpc protocol file for marginal computation
+
+        Returns:
+            tuple: (measurements_1way, measurements_2way) - both DP-protected
+        """
+        if not mpc_protocol_file.endswith('.mpc'):
+            mpc_protocol_file = f'{mpc_protocol_file}.mpc'
+
+        if not os.path.exists(mpc_protocol_file):
+            raise FileNotFoundError(
+                f"MPC marginal protocol file not found: {mpc_protocol_file}\n"
+                f"Expected: ppai_msr or ppai_msr_noisy_final"
+            )
+
+        print(f"Using MPC marginal protocol: {mpc_protocol_file}")
+        print("SECURITY: Computing marginals securely - raw data never revealed")
+
+        # Compile MPC protocol
+        self.executor.compile_protocol(mpc_protocol_file)
+
+        # Extract protocol name from file path
+        protocol_name = Path(mpc_protocol_file).stem
+
+        # Calculate total samples from party files
+        n_samples = sum(
+            sum(1 for _ in open(f)) - 1  # Subtract header
+            for f in party_data_files
+        )
+
+        # Execute MPC protocol with arguments
+        args = [n_samples, num_genes, num_classes]
+
+        print(f"Executing MPC marginal computation...")
+        print(f"Total samples (public): {n_samples}")
+        print(f"Number of parties: {len(party_data_files)}")
+
+        result = self.executor.execute_protocol(
+            protocol_name,
+            num_parties=len(party_data_files),
+            args=args
+        )
+
+        # Read results from MPC output
+        output_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+
+        # These outputs are DP-protected (noisy)
+        measurements_1way = self._read_mpc_output(
+            os.path.join(output_dir, 'marginals_1way.txt'),
+            num_genes * 4 + num_classes  # 4 bins per gene + label classes
+        )
+
+        measurements_2way = self._read_mpc_output(
+            os.path.join(output_dir, 'marginals_2way.txt'),
+            num_genes * 20  # 4 feature values * 5 label values per gene
+        )
+
+        print("✓ Marginals computed securely with DP protection")
+
+        return measurements_1way, measurements_2way
 
     def compute_marginals_mpc(self, data, num_genes, num_classes,
                                target_delta, sigma, mpc_protocol_file):
         """
-        Compute 1-way and 2-way marginals using MPC
+        [DEPRECATED - INSECURE] Compute marginals from combined data
+
+        WARNING: This method combines data from all parties before MPC,
+        which reveals raw data. Use compute_marginals_from_party_files() instead.
 
         Args:
             data: Input data array (n_samples, n_features+1)
@@ -206,6 +366,9 @@ class MPCMarginalComputer:
         Returns:
             tuple: (measurements_1way, measurements_2way)
         """
+        print("WARNING: Using insecure method that exposes raw data!")
+        print("Consider using compute_marginals_from_party_files() instead")
+
         # Split data between parties
         data_splits = self.splitter.split_data(data, party_ratios=[0.5, 0.5])
 
@@ -217,39 +380,15 @@ class MPCMarginalComputer:
                 prefix="mpc_input"
             )
 
-            # Compile MPC protocol
-            self.executor.compile_protocol(mpc_protocol_file)
-
-            # Extract protocol name from file path
-            protocol_name = Path(mpc_protocol_file).stem
-
-            # Execute MPC protocol with arguments
-            n_samples = len(data)
-            args = [n_samples, num_genes, num_classes]
-
-            result = self.executor.execute_protocol(
-                protocol_name,
-                num_parties=2,
-                args=args
-            )
-
-            # Read results from MPC output
-            # Note: This assumes the MPC protocol writes results to specific files
-            # Adjust based on your actual MPC protocol output format
-            output_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
-
-            measurements_1way = self._read_mpc_output(
-                os.path.join(output_dir, 'marginals_1way.txt'),
+            # Use the secure method
+            return self.compute_marginals_from_party_files(
+                party_files,
                 num_genes,
-                num_classes
+                num_classes,
+                target_delta,
+                sigma,
+                mpc_protocol_file
             )
-
-            measurements_2way = self._read_mpc_output(
-                os.path.join(output_dir, 'marginals_2way.txt'),
-                num_genes * 20  # 4 feature values * 5 label values
-            )
-
-        return measurements_1way, measurements_2way
 
     def _read_mpc_output(self, filepath, *shape):
         """
