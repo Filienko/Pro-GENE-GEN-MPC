@@ -103,7 +103,18 @@ class MPCProtocolExecutor:
             )
             return result
         except subprocess.CalledProcessError as e:
-            print(f"Protocol execution failed: {e.stderr}")
+            print(f"\n{'='*80}")
+            print(f"MPC PROTOCOL EXECUTION FAILED")
+            print(f"{'='*80}")
+            print(f"Command: {' '.join(cmd)}")
+            print(f"Exit code: {e.returncode}")
+            if e.stdout:
+                print(f"\n--- STDOUT ---")
+                print(e.stdout)
+            if e.stderr:
+                print(f"\n--- STDERR ---")
+                print(e.stderr)
+            print(f"{'='*80}\n")
             raise
 
 
