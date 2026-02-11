@@ -21,8 +21,12 @@ import pandas as pd
 import os
 import sys
 
+# Add paths for imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+sys.path.insert(0, os.path.join(current_dir, 'models', 'Private_PGM'))
+
 # Import the secure MPC implementation
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.Private_PGM.model_secure_mpc import SecureMPCPrivatePGM
 
 

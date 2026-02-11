@@ -25,6 +25,10 @@ import sys
 import os
 import warnings
 
+# Add parent directories to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+
 from utils.rdp_accountant import compute_rdp, get_privacy_spent
 from mbi import Dataset, FactoredInference, Domain
 
