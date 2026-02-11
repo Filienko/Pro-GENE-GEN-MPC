@@ -73,14 +73,29 @@ class SecureMPCPrivatePGM:
         if not mpspdz_path:
             print("⚠️  WARNING: No mpspdz_path provided - using SIMULATION mode")
             self.use_simulation = True
-        elif not os.path.exists(mpspdz_path):
-            print(f"⚠️  WARNING: MP-SPDZ not found at {mpspdz_path}")
-            print("   Falling back to SIMULATION mode")
-            self.use_simulation = True
-        elif not os.path.exists(os.path.join(mpspdz_path, 'compile.py')):
-            print(f"⚠️  WARNING: compile.py not found in {mpspdz_path}")
-            print("   Falling back to SIMULATION mode")
-            self.use_simulation = True
+        else:
+            # Convert to absolute path for robust checking
+            abs_mpspdz_path = os.path.abspath(mpspdz_path)
+            compile_py = os.path.join(abs_mpspdz_path, 'compile.py')
+            scripts_dir = os.path.join(abs_mpspdz_path, 'Scripts')
+
+            if not os.path.exists(abs_mpspdz_path):
+                print(f"⚠️  WARNING: MP-SPDZ directory not found at {abs_mpspdz_path}")
+                print("   Falling back to SIMULATION mode")
+                self.use_simulation = True
+            elif not os.path.isfile(compile_py):
+                print(f"⚠️  WARNING: compile.py not found at {compile_py}")
+                print("   MP-SPDZ installation appears incomplete")
+                print("   Falling back to SIMULATION mode")
+                self.use_simulation = True
+            elif not os.path.isdir(scripts_dir):
+                print(f"⚠️  WARNING: Scripts/ directory not found at {scripts_dir}")
+                print("   MP-SPDZ installation appears incomplete")
+                print("   Falling back to SIMULATION mode")
+                self.use_simulation = True
+            else:
+                # Update to use absolute path
+                self.mpspdz_path = abs_mpspdz_path
 
         # Initialize MPC helpers
         if self.use_simulation:
