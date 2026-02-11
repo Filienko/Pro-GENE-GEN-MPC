@@ -280,31 +280,22 @@ SECURITY GUARANTEE:
     args = parser.parse_args()
 
     # Run secure pipeline
-    try:
-        synthetic_df = run_secure_mpc_pipeline(
-            party_files=args.party_files,
-            output_path=args.output_path,
-            epsilon=args.epsilon,
-            delta=args.delta,
-            mpspdz_path=args.mpspdz_path,
-            bin_protocol=args.bin_protocol,
-            marginal_protocol=args.marginal_protocol,
-            num_iters=args.num_iters
-        )
+    synthetic_df = run_secure_mpc_pipeline(
+        party_files=args.party_files,
+        output_path=args.output_path,
+        epsilon=args.epsilon,
+        delta=args.delta,
+        mpspdz_path=args.mpspdz_path,
+        bin_protocol=args.bin_protocol,
+        marginal_protocol=args.marginal_protocol,
+        num_iters=args.num_iters
+    )
 
-        print("\n✓ SUCCESS - Secure synthetic data generated")
-        print(f"✓ Privacy guarantee: (ε={args.epsilon}, δ={args.delta})-DP")
-        print(f"✓ MPC security: Semi-honest against < {len(args.party_files)} parties")
-
-    except Exception as e:
-        print(f"\n✗ ERROR: {e}")
-        print("\nTroubleshooting:")
-        print("  1. Verify MP-SPDZ is installed at the specified path")
-        print("  2. Check that all party files exist and have consistent structure")
-        print("  3. Ensure MPC protocol files (.mpc) are available")
-        print("  4. Verify network connectivity between MPC parties")
-        sys.exit(1)
-
+    print("\n✓ SUCCESS - Secure synthetic data generated")
+    print(f"✓ Privacy guarantee: (ε={args.epsilon}, δ={args.delta})-DP")
+    print(f"✓ MPC security: Semi-honest against < {len(args.party_files)} parties")
+    synthetic_df.to_csv(args.output_path, index=False)
+    print(f"✓ Output saved to: {args.output_path}")
 
 if __name__ == "__main__":
     main()
