@@ -251,8 +251,14 @@ class MPCBinningComputer:
             import pandas as pd
             df = pd.read_csv(party_file)
 
+            # Filter to only numeric columns (remove IDs, string columns)
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            df_numeric = df[numeric_cols]
+
+            print(f"  Party {party_idx}: {len(df)} rows, {len(numeric_cols)} numeric columns")
+
             # Convert to numpy array (all numeric)
-            data_array = df.values
+            data_array = df_numeric.values
 
             # Write in MP-SPDZ input format (space-separated values)
             input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
@@ -260,7 +266,7 @@ class MPCBinningComputer:
                 for row in data_array:
                     f.write(' '.join([str(float(val)) for val in row]) + '\n')
 
-            print(f"  Party {party_idx}: {len(data_array)} rows → {input_file}")
+            print(f"  → Written to {input_file}")
 
         # Prepare MPC arguments
         args = party_sizes + [num_genes, num_classes]
