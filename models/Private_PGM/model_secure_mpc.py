@@ -212,45 +212,23 @@ class SecureMPCPrivatePGM:
             sigma_bin = 0.0
             sigma_marginal = 0.0
 
-        print(f"Binning noise (σ): {sigma_bin}")
-        print(f"Marginal noise (σ): {sigma_marginal}")
+        print(f"Privacy noise (σ): {sigma_marginal}")
 
-        # STEP 1: MPC Binning (with DP noise)
-        print("\n" + "-"*80)
-        print("STEP 1: SECURE MPC BINNING")
-        print("-"*80)
+        # INTEGRATED MPC WORKFLOW: Binning + Marginals (binned data stays secret!)
+        print("\nUsing integrated MPC protocol (ppai_bin_msr.mpc)")
+        print("SECURITY: Binned data will NEVER be revealed - stays secret throughout")
 
-        print("Using REAL MPC mode (MP-SPDZ)")
-        print("Raw data never revealed - all binning done in MPC")
-        binned_data_file, noisy_bin_means_file = self.mpc_binner.bin_data_mpc(
+        marginals_1way, marginals_2way = self.mpc_computer.compute_marginals_with_binning(
             party_data_files=party_data_files,
             num_genes=num_genes,
             num_classes=num_classes,
-            mpc_protocol_file=bin_protocol
-        )
-        print(f"✓ Binning completed securely")
-        print(f"  Output: {binned_data_file} (discrete bins)")
-        print(f"  Noisy means: {noisy_bin_means_file} (DP-protected)")
-        # Store noisy bin means for later inverse binning
-        self.noisy_bin_means = self._load_bin_means(noisy_bin_means_file)
-
-        # STEP 2: MPC Marginal Computation (with DP noise)
-        print("\n" + "-"*80)
-        print("STEP 2: SECURE MPC MARGINAL COMPUTATION")
-        print("-"*80)
-
-        print("Using REAL MPC mode (MP-SPDZ)")
-        print("Computing marginals securely with DP noise")
-        # For marginal computation, we need to provide the binned data files
-        # (which are still secret-shared in MPC)
-        marginals_1way, marginals_2way = self.mpc_computer.compute_marginals_from_party_files(
-            party_data_files=[binned_data_file], 
-            num_genes=num_genes,
-            num_classes=num_classes,
             target_delta=self.target_delta,
-            sigma=sigma_marginal,
-            mpc_protocol_file=marginal_protocol
+            sigma=sigma_marginal
         )
+
+        # Note: Integrated workflow doesn't separately output bin means
+        # They are used internally for inverse binning within the MPC protocol
+        self.noisy_bin_means = None
 
         print(f"✓ Marginals computed with DP protection")
         print(f"  1-way marginals: {len(marginals_1way)} values (noisy)")
