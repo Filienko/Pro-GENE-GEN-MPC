@@ -91,7 +91,7 @@ def validate_party_files(party_files):
 
 
 def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
-                             mpspdz_path=None, bin_protocol='ppai_bin_opt',
+                             mpspdz_path=None, bin_protocol='ppai_bin',
                              marginal_protocol='ppai_msr_noisy_final',
                              num_iters=10000):
     """
@@ -265,8 +265,8 @@ SECURITY GUARANTEE:
     parser.add_argument(
         '--bin_protocol',
         type=str,
-        default='ppai_bin_opt',
-        help='MPC protocol for binning (default: ppai_bin_opt)'
+        default='ppai_bin',
+        help='MPC protocol for binning (default: ppai_bin)'
     )
     parser.add_argument(
         '--marginal_protocol',
