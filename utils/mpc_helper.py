@@ -65,7 +65,7 @@ class MPCProtocolExecutor:
             return True
         except subprocess.CalledProcessError as e:
             print(f"Compilation failed: {e.stderr}")
-            return False
+            raise RuntimeError(f"MPC compilation failed for {mpc_file}:\n{e.stderr}")
 
     def execute_protocol(self, protocol_name, num_parties=2, args=None):
         """
