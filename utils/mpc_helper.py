@@ -493,24 +493,35 @@ class MPCMarginalComputer:
 
             if line == '1WAY_FEATURES:':
                 section = '1way_features'
+                current_values = []
             elif line == '1WAY_LABELS:':
                 section = '1way_labels'
+                # Reshape 1-way features: one value per line, 4 values per gene
+                if current_values:
+                    marginals_1way_features = np.array(current_values).reshape(-1, 4)
+                current_values = []
             elif line == '2WAY:':
                 section = '2way'
+                # Save 1-way labels
+                if current_values:
+                    marginals_1way_labels = np.array(current_values)
+                current_values = []
             elif line and section:
-                parts = line.split()
-                if len(parts) > 0:
-                    values = [float(x) for x in parts]
-                    if section == '1way_features':
-                        marginals_1way_features.append(values)
-                    elif section == '1way_labels':
-                        marginals_1way_labels = values
-                    elif section == '2way':
-                        marginals_2way.append(values)
+                # Each line has one value
+                try:
+                    current_values.append(float(line.strip()))
+                except ValueError:
+                    pass  # Skip non-numeric lines
 
-        # Combine 1-way marginals: features + labels
-        measurements_1way = np.array(marginals_1way_features + [marginals_1way_labels])
-        measurements_2way = np.array(marginals_2way)
+        # Process remaining values for 2-way marginals
+        if current_values and section == '2way':
+            # Reshape 2-way: one value per line, 20 values per gene
+            marginals_2way = np.array(current_values).reshape(-1, 20)
+
+        # Combine 1-way marginals: features (flattened) + labels
+        marginals_1way_flat = marginals_1way_features.flatten()
+        measurements_1way = np.concatenate([marginals_1way_flat, marginals_1way_labels])
+        measurements_2way = marginals_2way
 
         print(f"  1-way marginals shape: {measurements_1way.shape}")
         print(f"  2-way marginals shape: {measurements_2way.shape}")
