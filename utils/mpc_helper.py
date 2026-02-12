@@ -208,9 +208,9 @@ class MPCBinningComputer:
         self.splitter = HorizontalDataSplitter(num_parties=2)
 
     def bin_data_mpc(self, party_data_files, num_genes, num_classes,
-                     mpc_protocol_file='ppai_bin_opt'):
+                     mpc_protocol_file='ppai_bin'):
         """
-        Bin data using MPC protocol - ensures raw data never revealed
+        Bin SCALE = 2 ** 16data using MPC protocol - ensures raw data never revealed
 
         Args:
             party_data_files: List of file paths containing data for each party
@@ -260,10 +260,15 @@ class MPCBinningComputer:
             data_array = df_numeric.values
 
             # Write in MP-SPDZ input format (space-separated values)
+            SCALE = 2 ** 16 
+            
             input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
             with open(input_file, 'w') as f:
                 for row in data_array:
-                    f.write(' '.join([str(float(val)) for val in row]) + '\n')
+                    # Convert each float to scaled integer
+                    # Example: 1.5 -> 98304
+                    scaled_row = [str(int(float(val) * SCALE)) for val in row]
+                    f.write(' '.join(scaled_row) + '\n')
 
             print(f"  → Written to {input_file}")
 
