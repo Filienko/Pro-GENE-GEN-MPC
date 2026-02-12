@@ -239,7 +239,8 @@ print_ln('=== MARGINALS_OUTPUT_START ===')
 print_ln('1WAY_FEATURES:')
 for i in range(num_genes):
     for j in range(4):
-        print_float_plain(real_counts[i][j].reveal())
+        val = real_counts[i][j].reveal()
+        print_float_plain(val)
         if j < 3:
             print_str(' ')
     print_ln('')
@@ -247,7 +248,8 @@ for i in range(num_genes):
 # Output 1-way label marginals (num_classes)
 print_ln('1WAY_LABELS:')
 for i in range(num_classes):
-    print_float_plain(real_counts_l[i].reveal())
+    val = real_counts_l[i].reveal()
+    print_float_plain(val)
     if i < num_classes - 1:
         print_str(' ')
 print_ln('')
@@ -256,7 +258,8 @@ print_ln('')
 print_ln('2WAY:')
 for i in range(num_genes):
     for k in range(20):
-        print_float_plain(real_counts_2way[i][k].reveal())
+        val = real_counts_2way[i][k].reveal()
+        print_float_plain(val)
         if k < 19:
             print_str(' ')
     print_ln('')
