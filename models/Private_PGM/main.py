@@ -7,6 +7,7 @@ import shutil
 
 sys.path.append("../..")
 from model import Private_PGM
+from mpc_model import MPC_PrivatePGM
 from utils import *
 
 DATA_DIR = "../../data/"
@@ -123,6 +124,27 @@ def parse_arguments():
         default=1e-5,
         help="Delta differential privacy parameter",
     )
+
+    ### MPC setting
+    parser.add_argument(
+        "--use_mpc",
+        action="store_true",
+        default=False,
+        help="Use MPC-based Private PGM instead of centralized version",
+    )
+    parser.add_argument(
+        "--mpc_path",
+        type=str,
+        default=None,
+        help="Path to MP-SPDZ installation (default: /opt/MP-SPDZ or $MPC_PATH)",
+    )
+    parser.add_argument(
+        "--mpc_protocol",
+        type=str,
+        default="ring",
+        choices=["ring", "semi2k", "mascot"],
+        help="MPC protocol to use (default: ring)",
+    )
     # parser_pgm = subparsers.add_parser('private-pgm', parents=[privacy_parser])
     args = parser.parse_args()
     return args
@@ -219,9 +241,21 @@ def main():
         model = load_object(os.path.join(save_dir, "model.pkl"))
     else:
         ### Set up model and training
-        model = Private_PGM(
-            "label", args.enable_privacy, args.target_epsilon, args.target_delta
-        )
+        if args.use_mpc:
+            print("Using MPC-based Private PGM")
+            model = MPC_PrivatePGM(
+                "label",
+                args.enable_privacy,
+                args.target_epsilon,
+                args.target_delta,
+                mpc_path=args.mpc_path,
+                protocol=args.mpc_protocol,
+            )
+        else:
+            print("Using centralized Private PGM")
+            model = Private_PGM(
+                "label", args.enable_privacy, args.target_epsilon, args.target_delta
+            )
         save_object(model, os.path.join(save_dir, "model.pkl"))
         model.train(train_dataframe, config, num_iters=args.num_iters)
         save_object(model, os.path.join(save_dir, "model.pkl"))
