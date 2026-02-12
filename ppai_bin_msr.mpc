@@ -3,25 +3,130 @@ import random
 from Compiler import ml
 
 
+############# Getting secret shares #############
 
-####### Takes integer inputs
-
-N = int(program.args[1])  #945
-num_genes = int(program.args[2]) #958
-num_classes = int(program.args[3]) #5
-epsilon = 5 #int(program.args[4])  #5
+num_patients_0 = int(program.args[1]) #951
+num_patients_1 = int(program.args[2]) #950
+num_genes = int(program.args[3]) #958
+num_classes = int(program.args[4]) #5
+epsilon = 5 #int(program.args[5])
 num_data_custodians = 2
-data = sfix.Matrix(N,num_genes+1)
-data.input_from(0)
+qtls = [0.25, 0.5, 0.75]
+
+# take data from write_to_mpc
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+N = num_patients_0 + num_patients_1
+
+data_0.input_from(0)
+data_1.input_from(1)
+
+############# Combined data #############
+data = sfix.Matrix(N, num_genes+1)
+for i in range(num_patients_0):
+    data[i] = data_0[i]
+
+for i in range(num_patients_1):
+    data[i+num_patients_0] = data_1[i]
 
 
+# Split into train/val
+indices = list(range(len(data)))
+random.shuffle(indices)
+
+train_idx = indices[0:N-N//4]
+val_idx = indices[N-N//4:]
+
+train_data = sfix.Matrix(len(train_idx), num_genes)
+train_labels = sfix.Array(len(train_idx))
+val_data = sfix.Matrix(len(val_idx), num_genes)
+val_labels = sfix.Array(len(val_idx))
+
+for j,idx in enumerate(train_idx):
+         train_data[j] = data[idx][0:num_genes]
+         train_labels[j] = data[idx][num_genes]
+
+for j,idx in enumerate(val_idx):
+         val_data[j] = data[idx][0:num_genes]
+         val_labels[j] = data[idx][num_genes]
+
+def NormalSampler():
+   sum_u = 0
+   for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+   sum_u = sum_u - 6
+   return sum_u
+
+def bin_column(gene1,n):
+    gene1_q = Array.create_from(gene1)
+    gene1_q.sort()
+    Q = sfix.Array(len(qtls))
+    k = 0
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1:   # because N is public
+            Q[k] = gene1_q[0]
+        elif pos >= n:
+            Q[k] = gene1_q[n]
+        else:
+            Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k = k+1
+
+    gene1_q = Array.create_from(gene1)
+    for i in range(n):
+        x = gene1[i]
+        c0 = (x<Q[0])
+        c1 = (x<Q[1])
+        c2 = (x<Q[2])
+        gene1[i] = 3-c2-c1-c0
+
+    mean = sfix.Array(len(qtls)+1)
+    count = sfix.Array(len(qtls)+1)
+    for i in range(n):
+        for b in range(len(mean)):
+            c = (gene1[i] == b)
+            mean[b] = mean[b] + c * gene1_q[i]
+            count[b] = count[b] + c
+    sigma = sfix(1.5)
+    for i in range(len(mean)):
+        mean[i] = mean[i]/count[i]
+        mean[i] = mean[i] + sigma * NormalSampler()
+
+    return gene1, mean
+
+
+############# STEP 1: BINNING (SECRET) #############
+start_timer(200)
+mean_matrix = []
+print_ln('Starting secure binning...')
+
+# Binning train data with mean computation
+for j in range(num_genes):
+    gene1 = sfix.Array(len(train_idx))
+    for p in range(len(train_idx)):
+                gene1[p] = train_data[p][j]
+    gene1, mean1 = bin_column(gene1, len(gene1))
+    mean_matrix.append(mean1)
+    for p in range(len(train_idx)):
+                train_data[p][j] = gene1[p]
+stop_timer(200)
+print_ln('Binning complete (data remains secret)')
+
+
+############# STEP 2: COMPUTE MARGINALS ON BINNED DATA (SECRET) #############
+start_timer(300)
+print_ln('Computing marginals on binned data...')
+
+# Marginals computation - binned data stays secret!
 real_counts = sfix.Matrix(num_genes, 4)  # 1-way feature marginals
 real_counts_l = sfix.Array(num_classes)   # 1-way label marginals
 real_counts_2way = sfix.Matrix(num_genes, 20)  # 2-way marginals (flattened: 4 feature vals * 5 label vals)
 
-########## Compute marginals marginals optimized
-for i in range(N):
-    val_s = data[i][num_genes]
+# Compute marginals from binned training data
+for i in range(len(train_idx)):
+    val_s = train_labels[i]
     label_is = sfix.Array(5)
 
     s_minus_0 = val_s
@@ -41,7 +146,7 @@ for i in range(N):
         real_counts_l[l] = real_counts_l[l] + label_is[l]
 
     for j in range(num_genes):
-        val_r = data[i][j]
+        val_r = train_data[i][j]
 
         r_minus_10 = 1 - val_r
         r_minus_1 = val_r - 1
@@ -56,13 +161,11 @@ for i in range(N):
         gene_is[2] = val_r * r_minus_1 * r_minus_30 / 2        # (val_r == 2)
         gene_is[3] = val_r * r_minus_1 * r_minus_2 / 6      # (val_r == 3)
 
-
         # Update 1-way feature marginals
         for f in range(4):
             real_counts[j][f] = real_counts[j][f] + gene_is[f]
 
         # Update 2-way marginals
-        base_idx = j * 20  # for each gene
         for f in range(4):
             feat_idx = f * 5
             feat_indicator = gene_is[f]
@@ -74,16 +177,15 @@ for i in range(N):
             real_counts_2way[j][feat_idx + 3] = real_counts_2way[j][feat_idx + 3] + feat_indicator * label_is[3]
             real_counts_2way[j][feat_idx + 4] = real_counts_2way[j][feat_idx + 4] + feat_indicator * label_is[4]
 
+stop_timer(300)
+
+
+############# STEP 3: ADD NOISE (SECRET) #############
+start_timer(400)
+print_ln('Adding DP noise...')
 
 target_delta = 1e-5
-sigma = 1.349069114347003 # wil be computed in clear by one of the MPC servers)
-
-def NormalSampler():
-   sum_u = 0
-   for _ in range(12):
-        sum_u = sum_u + sfix.get_random(0, 1)
-   sum_u = sum_u - 6
-   return sum_u
+sigma = 1.349069114347003
 
 def compute_laplace(sigma):
    sum_u = 0
@@ -92,12 +194,10 @@ def compute_laplace(sigma):
    sum_u = sum_u - 6
    return sum_u
 
-
-####### Noisy 1-way marginals
+# Noisy 1-way marginals
 if target_delta > 0:
     # add gaussian noise
-    # Weights
-    w = 0.03229168418603133 # * (num_genes + 1) #[1] * (num_genes + 1), then l2 norm = 1, one MPC server can compute this as lens are public
+    w = 0.03229168418603133
     for i in range(num_genes):
        for j in range(4):
            real_counts[i][j] = real_counts[i][j] * w + sigma * NormalSampler()
@@ -107,36 +207,32 @@ else:
     # add laplace noise
     for i in range(num_genes):
        for j in range(4):
-           real_counts[i][j] = real_counts[i][j] + compute_laplace(sigma)  #np.random.laplace(loc=0, scale=sigma, size=x.size)
+           real_counts[i][j] = real_counts[i][j] + compute_laplace(sigma)
     for i in range(num_classes):
            real_counts_l[i] = real_counts_l[i] + compute_laplace(sigma)
 
-
-
-
-num_cliques = num_genes #one MPC server can compute this as lens are public
-
-
-####### Noisy 2-way marginals
+# Noisy 2-way marginals
+num_cliques = num_genes
 if target_delta == 0:
     sigma = 1.0 / num_cliques / 2.0
 
 if target_delta > 0:
     # add gaussian noise
-    # Weights
-    w = 0.03230853348756192 #[0.03230853348756192] * num_genes #[1] * (num_genes + 1), then l2 norm = 1, one MPC server can compute this as lens are public
+    w = 0.03230853348756192
     for i in range(num_genes):
        for k in range(20):
            real_counts_2way[i][k] = real_counts_2way[i][k] * w + sigma * NormalSampler()
-
 else:
     # add laplace noise
     for i in range(num_genes):
        for k in range(20):
-           real_counts_2way[i][k] = real_counts_2way[i][k] + compute_laplace(sigma)  #np.random.laplace(loc=0, scale=sigma, size=x.size)
+           real_counts_2way[i][k] = real_counts_2way[i][k] + compute_laplace(sigma)
+
+stop_timer(400)
 
 
-####### Output noisy marginals
+############# STEP 4: REVEAL ONLY NOISY MARGINALS #############
+start_timer(500)
 print_ln('=== MARGINALS_OUTPUT_START ===')
 
 # Output 1-way feature marginals (num_genes x 4)
@@ -166,3 +262,6 @@ for i in range(num_genes):
     print_ln('')
 
 print_ln('=== MARGINALS_OUTPUT_END ===')
+stop_timer(500)
+
+print_ln('Complete! Binned data never revealed - only noisy marginals output.')

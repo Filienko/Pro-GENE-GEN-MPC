@@ -289,19 +289,59 @@ class MPCBinningComputer:
             args=args
         )
 
-        # Read results from MPC output
+        # Parse binned data from stdout
+        print("Parsing binned data from MPC output...")
+        binned_data = self._parse_binned_output(result.stdout)
+
+        # Write binned data to file for next MPC stage
         output_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+        binned_data_file = os.path.join(output_dir, 'binned_train.txt')
 
-        binned_data_file = os.path.join(output_dir, 'binned_data.txt')
-        bin_means_file = os.path.join(output_dir, 'noisy_bin_means.txt')
+        # Write in MP-SPDZ input format (scaled integers, space-separated)
+        SCALE = 2 ** 16
+        with open(binned_data_file, 'w') as f:
+            for row in binned_data:
+                # Convert floats to scaled integers
+                scaled_row = [str(int(float(val) * SCALE)) for val in row]
+                f.write(' '.join(scaled_row) + '\n')
 
-        if not os.path.exists(binned_data_file):
-            raise FileNotFoundError(
-                f"MPC binning output not found: {binned_data_file}\n"
-                f"The MPC protocol may have failed or produced different output files."
-            )
+        print(f"✓ Binned data written to {binned_data_file}")
+        print(f"  Shape: {len(binned_data)} samples x {len(binned_data[0])} features")
 
-        return binned_data_file, bin_means_file
+        return binned_data_file
+
+    def _parse_binned_output(self, stdout):
+        """
+        Parse binned data output from ppai_bin.mpc stdout
+
+        Args:
+            stdout: Standard output from MPC execution
+
+        Returns:
+            list of lists: Binned data rows
+        """
+        lines = stdout.split('\n')
+        binned_data = []
+        in_output_section = False
+
+        for line in lines:
+            line = line.strip()
+            if line == '=== BINNING_OUTPUT_START ===':
+                in_output_section = True
+                continue
+            elif line == '=== BINNING_OUTPUT_END ===':
+                break
+            elif in_output_section and line:
+                # Skip the size line
+                if ' ' in line and not line.startswith('Binned'):
+                    parts = line.split()
+                    if len(parts) > 2:  # Data line
+                        binned_data.append([float(x) for x in parts])
+
+        if not binned_data:
+            raise ValueError("No binned data found in MPC output")
+
+        return binned_data
 
 
 class MPCMarginalComputer:
@@ -321,14 +361,170 @@ class MPCMarginalComputer:
         self.splitter = HorizontalDataSplitter(num_parties=2)
         self.binner = MPCBinningComputer(mpspdz_path, protocol)
 
+    def compute_marginals_with_binning(self, party_data_files, num_genes,
+                                       num_classes, target_delta, sigma):
+        """
+        Complete workflow: Bin data then compute noisy marginals (SECURE - no data leakage)
+
+        This method uses a combined MPC protocol (ppai_bin_msr.mpc) that:
+        1. Bins the data securely (stays secret)
+        2. Computes marginals on binned data (stays secret)
+        3. Adds DP noise (stays secret)
+        4. Only reveals final noisy marginals
+
+        SECURITY: Binned data is NEVER revealed - stays secret throughout
+
+        Args:
+            party_data_files: List of file paths containing data for each party
+            num_genes: Number of gene/feature columns
+            num_classes: Number of class labels
+            target_delta: Delta parameter for DP
+            sigma: Noise scale parameter
+
+        Returns:
+            tuple: (measurements_1way, measurements_2way) - both DP-protected
+        """
+        print("\n" + "="*80)
+        print("INTEGRATED MPC WORKFLOW: Binning → MSR (binned data stays secret)")
+        print("="*80)
+
+        protocol_name = 'ppai_bin_msr'
+        mpc_file_path = os.path.join(self.executor.mpspdz_path, f'{protocol_name}.mpc')
+
+        if not os.path.exists(mpc_file_path):
+            raise FileNotFoundError(
+                f"MPC protocol file not found: {mpc_file_path}\n"
+                f"Expected: ppai_bin_msr.mpc in {self.executor.mpspdz_path}"
+            )
+
+        # Calculate party sizes from input files
+        party_sizes = []
+        for party_file in party_data_files:
+            import pandas as pd
+            df = pd.read_csv(party_file)
+            party_sizes.append(len(df))
+
+        # Prepare MPC input files (raw data as secret shares)
+        player_data_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+        os.makedirs(player_data_dir, exist_ok=True)
+
+        print(f"Preparing MPC input files in {player_data_dir}...")
+        for party_idx, party_file in enumerate(party_data_files):
+            import pandas as pd
+            df = pd.read_csv(party_file)
+
+            # Filter to only numeric columns
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            df_numeric = df[numeric_cols]
+
+            print(f"  Party {party_idx}: {len(df)} rows, {len(numeric_cols)} numeric columns")
+
+            # Convert to numpy array (all numeric)
+            data_array = df_numeric.values
+
+            # Write in MP-SPDZ input format (space-separated scaled integers)
+            SCALE = 2 ** 16
+            input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
+            with open(input_file, 'w') as f:
+                for row in data_array:
+                    scaled_row = [str(int(float(val) * SCALE)) for val in row]
+                    f.write(' '.join(scaled_row) + '\n')
+
+            print(f"  → Written to {input_file}")
+
+        # Prepare MPC arguments
+        args = party_sizes + [num_genes, num_classes]
+
+        print(f"\nCompiling integrated MPC protocol...")
+        self.executor.compile_protocol(protocol_name, args=args)
+
+        print(f"\nExecuting integrated MPC protocol (binning + MSR)...")
+        print(f"  Party sizes: {party_sizes}")
+        print(f"  SECURITY: Binned data will NEVER be revealed")
+
+        result = self.executor.execute_protocol(
+            protocol_name,
+            num_parties=len(party_sizes),
+            args=args
+        )
+
+        # Parse marginals from output
+        print("\nParsing noisy marginals from output...")
+        measurements_1way, measurements_2way = self._parse_marginals_output(
+            result.stdout, num_genes, num_classes
+        )
+
+        print("\n" + "="*80)
+        print("✓ Complete! Only noisy marginals revealed - binned data stayed secret")
+        print("="*80 + "\n")
+
+        return measurements_1way, measurements_2way
+
+    def _parse_marginals_output(self, stdout, num_genes, num_classes):
+        """
+        Parse marginals output from ppai_bin_msr.mpc stdout
+
+        Args:
+            stdout: Standard output from MPC execution
+            num_genes: Number of genes
+            num_classes: Number of classes
+
+        Returns:
+            tuple: (measurements_1way, measurements_2way)
+        """
+        lines = stdout.split('\n')
+        in_output_section = False
+        section = None
+
+        marginals_1way_features = []
+        marginals_1way_labels = []
+        marginals_2way = []
+
+        for line in lines:
+            line = line.strip()
+
+            if line == '=== MARGINALS_OUTPUT_START ===':
+                in_output_section = True
+                continue
+            elif line == '=== MARGINALS_OUTPUT_END ===':
+                break
+            elif not in_output_section:
+                continue
+
+            if line == '1WAY_FEATURES:':
+                section = '1way_features'
+            elif line == '1WAY_LABELS:':
+                section = '1way_labels'
+            elif line == '2WAY:':
+                section = '2way'
+            elif line and section:
+                parts = line.split()
+                if len(parts) > 0:
+                    values = [float(x) for x in parts]
+                    if section == '1way_features':
+                        marginals_1way_features.append(values)
+                    elif section == '1way_labels':
+                        marginals_1way_labels = values
+                    elif section == '2way':
+                        marginals_2way.append(values)
+
+        # Combine 1-way marginals: features + labels
+        measurements_1way = np.array(marginals_1way_features + [marginals_1way_labels])
+        measurements_2way = np.array(marginals_2way)
+
+        print(f"  1-way marginals shape: {measurements_1way.shape}")
+        print(f"  2-way marginals shape: {measurements_2way.shape}")
+
+        return measurements_1way, measurements_2way
+
     def compute_marginals_from_party_files(self, party_data_files, num_genes,
                                            num_classes, target_delta, sigma,
                                            mpc_protocol_file='ppai_msr_noisy_final'):
         """
-        Compute marginals using MPC from party data files (SECURE - no data leakage)
+        [DEPRECATED] Compute marginals using MPC from party data files
 
-        This method ensures raw data never leaves individual parties.
-        Each party's data is read separately and input as secret shares.
+        WARNING: This expects already binned data. Use compute_marginals_with_binning() instead
+        for the complete workflow.
 
         Args:
             party_data_files: List of file paths containing data for each party

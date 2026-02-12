@@ -125,3 +125,24 @@ for j in range(len(train_data)):
 stop_timer(300)
 
 #### In k folds: we call bin on train and incerse bin on train k times and then in final it would be 1 time so total k+1 times
+
+############# Output binned data for MSR computation #############
+start_timer(400)
+
+print_ln('=== BINNING_OUTPUT_START ===')
+print_ln('%s %s', len(train_idx), num_genes)
+
+# Output binned data - Python will parse and save for next MPC stage
+# Format: each line is space-separated values for one sample
+for i in range(len(train_idx)):
+    # Build row of revealed values
+    for j in range(num_genes):
+        print_float_plain(train_data[i][j].reveal())
+        print_str(' ')
+    # Add label at end
+    print_float_plain(train_labels[i].reveal())
+    print_ln('')
+
+print_ln('=== BINNING_OUTPUT_END ===')
+
+stop_timer(400)
