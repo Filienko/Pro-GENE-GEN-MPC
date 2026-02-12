@@ -103,7 +103,18 @@ class MPCProtocolExecutor:
             )
             return result
         except subprocess.CalledProcessError as e:
-            print(f"Protocol execution failed: {e.stderr}")
+            print(f"\n{'='*80}")
+            print(f"MPC PROTOCOL EXECUTION FAILED")
+            print(f"{'='*80}")
+            print(f"Command: {' '.join(cmd)}")
+            print(f"Exit code: {e.returncode}")
+            if e.stdout:
+                print(f"\n--- STDOUT ---")
+                print(e.stdout)
+            if e.stderr:
+                print(f"\n--- STDERR ---")
+                print(e.stderr)
+            print(f"{'='*80}\n")
             raise
 
 
@@ -205,25 +216,24 @@ class MPCBinningComputer:
             party_data_files: List of file paths containing data for each party
             num_genes: Number of gene/feature columns
             num_classes: Number of class labels
-            mpc_protocol_file: Path to .mpc binning protocol file
+            mpc_protocol_file: Protocol name (without .mpc extension) or path to .mpc file
 
         Returns:
             tuple: (binned_data_file, noisy_bin_means_file)
         """
-        if not mpc_protocol_file.endswith('.mpc'):
-            mpc_protocol_file = f'{mpc_protocol_file}.mpc'
+        # Extract protocol name (remove .mpc extension if present)
+        protocol_name = Path(mpc_protocol_file).stem
 
-        if not os.path.exists(mpc_protocol_file):
+        # Check if .mpc file exists in MP-SPDZ directory
+        mpc_file_path = os.path.join(self.executor.mpspdz_path, f'{protocol_name}.mpc')
+        if not os.path.exists(mpc_file_path):
             raise FileNotFoundError(
-                f"MPC binning protocol file not found: {mpc_protocol_file}\n"
-                f"Expected one of: ppai_bin.mpc, ppai_bin_opt.mpc, ppai_bin_test.mpc"
+                f"MPC binning protocol file not found: {mpc_file_path}\n"
+                f"Expected one of: ppai_bin.mpc, ppai_bin_opt.mpc, ppai_bin_test.mpc in {self.executor.mpspdz_path}"
             )
 
-        print(f"Using MPC binning protocol: {mpc_protocol_file}")
+        print(f"Using MPC binning protocol: {protocol_name}.mpc")
         print("SECURITY: Raw data will never be revealed - all binning done in MPC")
-
-        # Extract protocol name
-        protocol_name = Path(mpc_protocol_file).stem
 
         # Calculate party sizes from input files
         party_sizes = []
@@ -231,12 +241,39 @@ class MPCBinningComputer:
             with open(party_file, 'r') as f:
                 party_sizes.append(sum(1 for _ in f) - 1)  # Subtract header
 
+        # Prepare MPC input files (raw data as secret shares)
+        player_data_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+        os.makedirs(player_data_dir, exist_ok=True)
+
+        print(f"Preparing MPC input files in {player_data_dir}...")
+        for party_idx, party_file in enumerate(party_data_files):
+            import pandas as pd
+            df = pd.read_csv(party_file)
+
+            # Filter to only numeric columns (remove IDs, string columns)
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            df_numeric = df[numeric_cols]
+
+            print(f"  Party {party_idx}: {len(df)} rows, {len(numeric_cols)} numeric columns")
+
+            # Convert to numpy array (all numeric)
+            data_array = df_numeric.values
+
+            # Write in MP-SPDZ input format (space-separated values)
+            input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
+            with open(input_file, 'w') as f:
+                for row in data_array:
+                    f.write(' '.join([str(float(val)) for val in row]) + '\n')
+
+            print(f"  → Written to {input_file}")
+
         # Prepare MPC arguments
         args = party_sizes + [num_genes, num_classes]
 
         print(f"Compiling MPC protocol with arguments: {args}")
         # Compile MPC protocol WITH arguments (needed for program.args)
-        self.executor.compile_protocol(mpc_protocol_file, args=args)
+        # Pass protocol name WITHOUT .mpc extension (MP-SPDZ expects this)
+        self.executor.compile_protocol(protocol_name, args=args)
 
         print(f"Executing MPC binning with {len(party_sizes)} parties...")
         print(f"Party sizes: {party_sizes}")
@@ -294,25 +331,24 @@ class MPCMarginalComputer:
             num_classes: Number of class labels
             target_delta: Delta parameter for DP
             sigma: Noise scale parameter
-            mpc_protocol_file: Path to .mpc protocol file for marginal computation
+            mpc_protocol_file: Protocol name (without .mpc extension) or path to .mpc file
 
         Returns:
             tuple: (measurements_1way, measurements_2way) - both DP-protected
         """
-        if not mpc_protocol_file.endswith('.mpc'):
-            mpc_protocol_file = f'{mpc_protocol_file}.mpc'
+        # Extract protocol name (remove .mpc extension if present)
+        protocol_name = Path(mpc_protocol_file).stem
 
-        if not os.path.exists(mpc_protocol_file):
+        # Check if .mpc file exists in MP-SPDZ directory
+        mpc_file_path = os.path.join(self.executor.mpspdz_path, f'{protocol_name}.mpc')
+        if not os.path.exists(mpc_file_path):
             raise FileNotFoundError(
-                f"MPC marginal protocol file not found: {mpc_protocol_file}\n"
-                f"Expected: ppai_msr or ppai_msr_noisy_final"
+                f"MPC marginal protocol file not found: {mpc_file_path}\n"
+                f"Expected: ppai_msr.mpc or ppai_msr_noisy_final.mpc in {self.executor.mpspdz_path}"
             )
 
-        print(f"Using MPC marginal protocol: {mpc_protocol_file}")
+        print(f"Using MPC marginal protocol: {protocol_name}.mpc")
         print("SECURITY: Computing marginals securely - raw data never revealed")
-
-        # Extract protocol name from file path
-        protocol_name = Path(mpc_protocol_file).stem
 
         # Calculate total samples from party files
         n_samples = sum(
@@ -325,7 +361,8 @@ class MPCMarginalComputer:
 
         print(f"Compiling MPC protocol with arguments: {args}")
         # Compile MPC protocol WITH arguments (needed for program.args)
-        self.executor.compile_protocol(mpc_protocol_file, args=args)
+        # Pass protocol name WITHOUT .mpc extension (MP-SPDZ expects this)
+        self.executor.compile_protocol(protocol_name, args=args)
 
         print(f"Executing MPC marginal computation...")
         print(f"Total samples (public): {n_samples}")
