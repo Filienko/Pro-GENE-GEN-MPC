@@ -512,7 +512,9 @@ class MPCMarginalComputer:
                 # Save 1-way labels
                 if current_values:
                     marginals_1way_labels = np.array(current_values)
+                    print(f"  DEBUG: Collected {len(current_values)} label values")
                 current_values = []
+                print(f"  DEBUG: Starting 2-way marginals parsing...")
             elif line and section:
                 # Each line has one value
                 try:
@@ -522,6 +524,8 @@ class MPCMarginalComputer:
 
         # Process remaining values for 2-way marginals
         if current_values and section == '2way':
+            print(f"  DEBUG: Collected {len(current_values)} 2-way values")
+            print(f"  DEBUG: Expected {num_genes * 20} values")
             # Reshape 2-way: one value per line, 20 values per gene
             marginals_2way = np.array(current_values).reshape(-1, 20)
 
