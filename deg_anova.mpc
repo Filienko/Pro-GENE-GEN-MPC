@@ -1,0 +1,142 @@
+# -----------------------------------------------------------------------
+# COMPILER ARGUMENT PARSING
+# Read dimensions dynamically during the compile step
+# -----------------------------------------------------------------------
+if len(program.args) < 6:
+    print("Error: Missing compiler arguments.")
+    print("Usage: ./compile.py secure_anova_dynamic <N_0> <N_1> <M> <C> <K>")
+    print("Example: ./compile.py secure_anova_dynamic 100 100 20000 14 50")
+    # Halt compilation if arguments are missing
+    raise Exception("Missing arguments")
+
+N_0 = int(program.args[1])  # Samples from Party 0
+N_1 = int(program.args[2])  # Samples from Party 1
+M   = int(program.args[3])  # Number of genes
+C   = int(program.args[4])  # Number of classes
+K   = int(program.args[5])  # Top-K genes to select
+N   = N_0 + N_1 
+
+print(f"Compiling circuit for N={N} ({N_0} + {N_1}), M={M}, C={C}, Top-{K}...")
+
+# -----------------------------------------------------------------------
+# DATA STRUCTURE INITIALIZATION
+# -----------------------------------------------------------------------
+X = sfix.Matrix(N, M)
+Y = sint.Matrix(N, C) # One-hot encoded labels
+
+# -----------------------------------------------------------------------
+# INPUT PHASE: Reading from Party 0 and Party 1
+# -----------------------------------------------------------------------
+# Read Party 0 data
+@for_range(N_0)
+def _(i):
+    @for_range(M)
+    def _(j):
+        X[i][j] = sfix.get_input_from(0)
+    @for_range(C)
+    def _(c):
+        Y[i][c] = sint.get_input_from(0)
+
+# Read Party 1 data
+@for_range(N_1)
+def _(i):
+    row_idx = N_0 + i
+    @for_range(M)
+    def _(j):
+        X[row_idx][j] = sfix.get_input_from(1)
+    @for_range(C)
+    def _(c):
+        Y[row_idx][c] = sint.get_input_from(1)
+
+# -----------------------------------------------------------------------
+# PHASE 1: Public Class Counts & Inverses
+# -----------------------------------------------------------------------
+n_c_sec = Array(C, sint)
+n_c_sec.assign_all(0)
+
+@for_range(N)
+def _(i):
+    @for_range(C)
+    def _(c):
+        n_c_sec[c] += Y[i][c]
+
+# Reveal class counts to compute inverses in plaintext
+n_c_pub = Array(C, cint)
+n_c_inv = Array(C, cfix)
+@for_range(C)
+def _(c):
+    n_c_pub[c] = n_c_sec[c].reveal()
+    # Prevent cleartext div-by-zero if a class is entirely missing
+    safe_nc = n_c_pub[c] + (n_c_pub[c] == 0)
+    n_c_inv[c] = cfix(1.0) / cfix(safe_nc)
+
+n_inv = cfix(1.0) / cfix(N)
+
+# -----------------------------------------------------------------------
+# PHASE 2 & 3: Compute SST, SSB, and SSW efficiently
+# -----------------------------------------------------------------------
+SSB = Array(M, sfix)
+SSW = Array(M, sfix)
+eps = sfix(0.0001)
+
+@for_range(M)
+def _(j):
+    S_j = sfix(0)
+    SumSq_j = sfix(0)
+    
+    @for_range(N)
+    def _(i):
+        S_j += X[i][j]
+        SumSq_j += X[i][j] * X[i][j]
+        
+    mu_j = S_j * n_inv
+    SST_j = SumSq_j - (cfix(N) * (mu_j * mu_j))
+    
+    ssb_temp = sfix(0)
+    @for_range(C)
+    def _(c):
+        S_cj = sfix(0)
+        @for_range(N)
+        def _(i):
+            S_cj += X[i][j] * sfix(Y[i][c])
+            
+        mu_cj = S_cj * n_c_inv[c]
+        delta = mu_cj - mu_j
+        ssb_temp += cfix(n_c_pub[c]) * (delta * delta)
+        
+    SSB[j] = ssb_temp
+    SSW[j] = SST_j - ssb_temp + eps 
+
+# -----------------------------------------------------------------------
+# PHASE 4: Division-Free Secure Top-K (Selection Sort)
+# -----------------------------------------------------------------------
+selected_indices = Array(K, sint)
+is_available = Array(M, sint)
+is_available.assign_all(1)
+
+@for_range(K)
+def _(k):
+    best_idx = sint(0)
+    best_SSB = sfix(-1)
+    best_SSW = sfix(1)
+    
+    @for_range(M)
+    def _(j):
+        is_greater = (SSB[j] * best_SSW) > (best_SSB * SSW[j])
+        do_update = is_greater * is_available[j]
+        
+        best_idx = do_update.if_else(sint(j), best_idx)
+        best_SSB = do_update.if_else(SSB[j], best_SSB)
+        best_SSW = do_update.if_else(SSW[j], best_SSW)
+        
+    selected_indices[k] = best_idx
+    is_available[best_idx] = 0
+
+# -----------------------------------------------------------------------
+# OUTPUT
+# -----------------------------------------------------------------------
+print_ln("Top %s Differentially Expressed Gene Indices:", K)
+@for_range(K)
+def _(k):
+    revealed_idx = selected_indices[k].reveal()
+    print_ln("Rank %s: Gene Index %s", k + 1, revealed_idx)
