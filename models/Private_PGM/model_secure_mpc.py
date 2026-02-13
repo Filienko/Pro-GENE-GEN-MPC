@@ -218,7 +218,7 @@ class SecureMPCPrivatePGM:
         print("\nUsing integrated MPC protocol (ppai_bin_msr.mpc)")
         print("SECURITY: Binned data will NEVER be revealed - stays secret throughout")
 
-        marginals_1way, marginals_2way = self.mpc_computer.compute_marginals_with_binning(
+        marginals_1way, marginals_2way, bin_means_array = self.mpc_computer.compute_marginals_with_binning(
             party_data_files=party_data_files,
             num_genes=num_genes,
             num_classes=num_classes,
@@ -228,7 +228,16 @@ class SecureMPCPrivatePGM:
 
         # Note: Integrated workflow doesn't separately output bin means
         # They are used internally for inverse binning within the MPC protocol
-        self.noisy_bin_means = None
+        if bin_means_array is not None:
+            self.noisy_bin_means = {}
+            domain_keys = list(config.keys())
+            for i in range(num_genes):
+                col_name = domain_keys[i]  # Map gene names back to their index
+                self.noisy_bin_means[col_name] = bin_means_array[i]
+            print("✓ Successfully loaded DP-protected bin means for continuous data generation")
+        else:
+            self.noisy_bin_means = None
+            warnings.warn("Noisy bin means were not returned from MPC.")
 
         print(f"✓ Marginals computed with DP protection")
         print(f"  1-way marginals: {len(marginals_1way)} values (noisy)")

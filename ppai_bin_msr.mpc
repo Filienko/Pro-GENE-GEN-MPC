@@ -229,6 +229,21 @@ for i in range(num_genes):
         print_ln('%s', real_counts_2way[i][k].reveal())
 
 print_ln('=== MARGINALS_OUTPUT_END ===')
+print_ln('2WAY:')
+for i in range(num_genes):
+    for k in range(4 * num_classes):
+        print_ln('%s', real_counts_2way[i][k].reveal())
+
+# --- ADD THIS NEW BLOCK BELOW ---
+print_ln('=== BIN_MEANS_START ===')
+for i in range(num_genes):
+    for j in range(4):
+        print_ln('%s', mean_matrix[i][j].reveal())
+print_ln('=== BIN_MEANS_END ===')
+# --- END OF NEW BLOCK ---
+
+print_ln('=== MARGINALS_OUTPUT_END ===')
 stop_timer(500)
+
 
 print_ln('Complete! Binned data never revealed - only noisy marginals output.')

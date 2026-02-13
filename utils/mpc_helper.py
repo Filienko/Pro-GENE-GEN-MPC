@@ -455,89 +455,87 @@ class MPCMarginalComputer:
             args=args
         )
 
-        # Parse marginals from output
-        print("\nParsing noisy marginals from output...")
-        measurements_1way, measurements_2way = self._parse_marginals_output(
+        print("\nParsing noisy marginals and bin means from output...")
+        measurements_1way, measurements_2way, bin_means_array = self._parse_marginals_output(
             result.stdout, num_genes, num_classes
         )
 
         print("\n" + "="*80)
-        print("✓ Complete! Only noisy marginals revealed - binned data stayed secret")
+        print("✓ Complete! Only noisy marginals and means revealed - binned data stayed secret")
         print("="*80 + "\n")
 
-        return measurements_1way, measurements_2way
-
+        return measurements_1way, measurements_2way, bin_means_array
     def _parse_marginals_output(self, stdout, num_genes, num_classes):
-        """
-        Parse marginals output from ppai_bin_msr.mpc stdout
+            lines = stdout.split('\n')
+            in_marginals_section = False
+            in_means_section = False
+            section = None
 
-        Args:
-            stdout: Standard output from MPC execution
-            num_genes: Number of genes
-            num_classes: Number of classes
+            marginals_1way_features = []
+            marginals_1way_labels = []
+            marginals_2way = []
+            bin_means_list = []  # NEW: to hold the bin means
 
-        Returns:
-            tuple: (measurements_1way, measurements_2way)
-        """
-        lines = stdout.split('\n')
-        in_output_section = False
-        section = None
+            for line in lines:
+                line = line.strip()
 
-        marginals_1way_features = []
-        marginals_1way_labels = []
-        marginals_2way = []
+                # 1. Handle Bin Means parsing
+                if line == '=== BIN_MEANS_START ===':
+                    in_means_section = True
+                    continue
+                elif line == '=== BIN_MEANS_END ===':
+                    in_means_section = False
+                    continue
+                elif in_means_section and line:
+                    try:
+                        bin_means_list.append(float(line.strip()))
+                    except ValueError:
+                        pass
+                    continue
 
-        for line in lines:
-            line = line.strip()
+                # 2. Handle Marginals parsing
+                if line == '=== MARGINALS_OUTPUT_START ===':
+                    in_marginals_section = True
+                    continue
+                elif line == '=== MARGINALS_OUTPUT_END ===':
+                    break
+                elif not in_marginals_section:
+                    continue
 
-            if line == '=== MARGINALS_OUTPUT_START ===':
-                in_output_section = True
-                continue
-            elif line == '=== MARGINALS_OUTPUT_END ===':
-                break
-            elif not in_output_section:
-                continue
+                if line == '1WAY_FEATURES:':
+                    section = '1way_features'
+                    current_values = []
+                elif line == '1WAY_LABELS:':
+                    section = '1way_labels'
+                    if current_values:
+                        marginals_1way_features = np.array(current_values).reshape(-1, 4)
+                    current_values = []
+                elif line == '2WAY:':
+                    section = '2way'
+                    if current_values:
+                        marginals_1way_labels = np.array(current_values)
+                    current_values = []
+                elif line and section:
+                    try:
+                        current_values.append(float(line.strip()))
+                    except ValueError:
+                        pass
 
-            if line == '1WAY_FEATURES:':
-                section = '1way_features'
-                current_values = []
-            elif line == '1WAY_LABELS:':
-                section = '1way_labels'
-                # Reshape 1-way features: one value per line, 4 values per gene
-                if current_values:
-                    marginals_1way_features = np.array(current_values).reshape(-1, 4)
-                current_values = []
-            elif line == '2WAY:':
-                section = '2way'
-                # Save 1-way labels
-                if current_values:
-                    marginals_1way_labels = np.array(current_values)
-                    print(f"  DEBUG: Collected {len(current_values)} label values")
-                current_values = []
-                print(f"  DEBUG: Starting 2-way marginals parsing...")
-            elif line and section:
-                # Each line has one value
-                try:
-                    current_values.append(float(line.strip()))
-                except ValueError:
-                    pass  # Skip non-numeric lines
+            # Process remaining values for 2-way marginals
+            if current_values and section == '2way':
+                marginals_2way = np.array(current_values)
 
-        # Process remaining values for 2-way marginals
-        if current_values and section == '2way':
-            print(f"  DEBUG: Collected {len(current_values)} 2-way values")
-            print(f"  DEBUG: Expected {num_genes * 20} values")
-            # Keep as 1D flattened array - _convert_to_measurements expects this format
-            marginals_2way = np.array(current_values)
+            # Combine 1-way marginals
+            marginals_1way_flat = marginals_1way_features.flatten()
+            measurements_1way = np.concatenate([marginals_1way_flat, marginals_1way_labels])
+            measurements_2way = marginals_2way
 
-        # Combine 1-way marginals: features (flattened) + labels
-        marginals_1way_flat = marginals_1way_features.flatten()
-        measurements_1way = np.concatenate([marginals_1way_flat, marginals_1way_labels])
-        measurements_2way = marginals_2way  # Already flattened
+            # Convert bin means to numpy array
+            bin_means_array = None
+            if bin_means_list:
+                bin_means_array = np.array(bin_means_list).reshape(num_genes, 4)
 
-        print(f"  1-way marginals shape: {measurements_1way.shape}")
-        print(f"  2-way marginals shape: {measurements_2way.shape}")
-
-        return measurements_1way, measurements_2way
+            return measurements_1way, measurements_2way, bin_means_array
 
     def compute_marginals_from_party_files(self, party_data_files, num_genes,
                                            num_classes, target_delta, sigma,
