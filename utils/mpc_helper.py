@@ -433,14 +433,16 @@ class MPCMarginalComputer:
 
             print(f"  → Written to {input_file}")
 
-        # Prepare MPC arguments
+        # Prepare MPC arguments (runtime only, not compile-time)
         args = party_sizes + [num_genes, num_classes]
 
         print(f"\nCompiling integrated MPC protocol...")
-        self.executor.compile_protocol(protocol_name, args=args)
+        # Compile WITHOUT args - they're runtime arguments (program.args)
+        self.executor.compile_protocol(protocol_name, args=None)
 
         print(f"\nExecuting integrated MPC protocol (binning + MSR)...")
         print(f"  Party sizes: {party_sizes}")
+        print(f"  Runtime args: {args}")
         print(f"  SECURITY: Binned data will NEVER be revealed")
 
         result = self.executor.execute_protocol(
