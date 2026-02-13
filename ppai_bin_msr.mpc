@@ -24,7 +24,7 @@ data_1.input_from(1)
 ############# Combined data #############
 data = sfix.Matrix(N, num_genes+1)
 for i in range(num_patients_0):
-    data[i] = data_0[i]
+    data[i] = data_0[i]c
 
 for i in range(num_patients_1):
     data[i+num_patients_0] = data_1[i]
@@ -110,27 +110,19 @@ print_ln('Computing marginals on binned data...')
 # Marginals computation - binned data stays secret!
 real_counts = sfix.Matrix(num_genes, 4)  # 1-way feature marginals
 real_counts_l = sfix.Array(num_classes)   # 1-way label marginals
-real_counts_2way = sfix.Matrix(num_genes, 20)  # 2-way marginals (flattened: 4 feature vals * 5 label vals)
+real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)  # 2-way marginals (flattened: n feature vals * m label vals)
 
 # Compute marginals from binned training data
 for i in range(len(train_idx)):
     val_s = train_labels[i]
-    label_is = sfix.Array(5)
-
-    s_minus_0 = val_s
-    s_minus_1 = val_s - 1
-    s_minus_2 = val_s - 2
-    s_minus_3 = val_s - 3
-    s_minus_4 = val_s - 4
-
-    label_is[0] = s_minus_1 * s_minus_2 * s_minus_3 * s_minus_4 / 24  # (val_s == 0)
-    label_is[1] = s_minus_0 * s_minus_2 * s_minus_3 * s_minus_4 / 6   # (val_s == 1)
-    label_is[2] = s_minus_0 * s_minus_1 * s_minus_3 * s_minus_4 / 2   # (val_s == 2)
-    label_is[3] = s_minus_0 * s_minus_1 * s_minus_2 * s_minus_4 / 6   # (val_s == 3)
-    label_is[4] = s_minus_0 * s_minus_1 * s_minus_2 * s_minus_3 / 24  # (val_s == 4)
-
-    # Update 1-way label marginals
-    for l in range(5):
+    
+    # --- YOUR NEW DYNAMIC CODE ---
+    label_is = sfix.Array(num_classes)
+    for l in range(num_classes):
+        label_is[l] = (val_s == l)
+    
+    # Update 1-way label marginals (CHANGE 5 TO num_classes)
+    for l in range(num_classes):
         real_counts_l[l] = real_counts_l[l] + label_is[l]
 
     for j in range(num_genes):
@@ -159,12 +151,8 @@ for i in range(len(train_idx)):
             feat_indicator = gene_is[f]
 
             # Unroll the inner loop for better performance
-            real_counts_2way[j][feat_idx + 0] = real_counts_2way[j][feat_idx + 0] + feat_indicator * label_is[0]
-            real_counts_2way[j][feat_idx + 1] = real_counts_2way[j][feat_idx + 1] + feat_indicator * label_is[1]
-            real_counts_2way[j][feat_idx + 2] = real_counts_2way[j][feat_idx + 2] +  feat_indicator * label_is[2]
-            real_counts_2way[j][feat_idx + 3] = real_counts_2way[j][feat_idx + 3] + feat_indicator * label_is[3]
-            real_counts_2way[j][feat_idx + 4] = real_counts_2way[j][feat_idx + 4] + feat_indicator * label_is[4]
-
+            for c in range(num_classes):
+                real_counts_2way[j][feat_idx + c] = real_counts_2way[j][feat_idx + c] + feat_indicator * label_is[c]
 stop_timer(300)
 
 
@@ -208,14 +196,13 @@ if target_delta > 0:
     # add gaussian noise
     w = 0.03230853348756192
     for i in range(num_genes):
-       for k in range(20):
+       for k in range(4 * num_classes):
            real_counts_2way[i][k] = real_counts_2way[i][k] * w + sigma * NormalSampler()
 else:
     # add laplace noise
     for i in range(num_genes):
-       for k in range(20):
+       for k in range(4 * num_classes):
            real_counts_2way[i][k] = real_counts_2way[i][k] + compute_laplace(sigma)
-
 stop_timer(400)
 
 
@@ -237,7 +224,7 @@ for i in range(num_classes):
 # Output 2-way marginals (num_genes x 20)
 print_ln('2WAY:')
 for i in range(num_genes):
-    for k in range(20):
+    for k in range(4 * num_classes):
         print_ln('%s', real_counts_2way[i][k].reveal())
 
 print_ln('=== MARGINALS_OUTPUT_END ===')
