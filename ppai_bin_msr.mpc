@@ -92,12 +92,12 @@ print_ln('Starting secure binning...')
 
 # Binning train data with mean computation
 for j in range(num_genes):
-    gene1 = sfix.Array(len(train_idx))
-    for p in range(len(train_idx)):
+    gene1 = sfix.Array(N)
+    for p in range(N):
                 gene1[p] = train_data[p][j]
     gene1, mean1 = bin_column(gene1, len(gene1))
     mean_matrix.append(mean1)
-    for p in range(len(train_idx)):
+    for p in range(N):
                 train_data[p][j] = gene1[p]
 stop_timer(200)
 print_ln('Binning complete (data remains secret)')
@@ -113,7 +113,7 @@ real_counts_l = sfix.Array(num_classes)   # 1-way label marginals
 real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)  # 2-way marginals (flattened: n feature vals * m label vals)
 
 # Compute marginals from binned training data
-for i in range(len(train_idx)):
+for i in range(N):
     val_s = train_labels[i]
     
     # --- YOUR NEW DYNAMIC CODE ---
@@ -145,9 +145,9 @@ for i in range(len(train_idx)):
         for f in range(4):
             real_counts[j][f] = real_counts[j][f] + gene_is[f]
 
-        # Update 2-way marginals
+        # Update 2-way marginals (4 feature bins × num_classes label values)
         for f in range(4):
-            feat_idx = f * 5
+            feat_idx = f * num_classes
             feat_indicator = gene_is[f]
 
             # Unroll the inner loop for better performance
@@ -221,9 +221,10 @@ print_ln('1WAY_LABELS:')
 for i in range(num_classes):
     print_ln('%s', real_counts_l[i].reveal())
 
-# Output 2-way marginals (num_genes x 20)
+# Output 2-way marginals (num_genes x 4 x num_classes)
 print_ln('2WAY:')
 for i in range(num_genes):
+    for k in range(4 * num_classes):
     for k in range(4 * num_classes):
         print_ln('%s', real_counts_2way[i][k].reveal())
 
