@@ -92,12 +92,12 @@ print_ln('Starting secure binning...')
 
 # Binning train data with mean computation
 for j in range(num_genes):
-    gene1 = sfix.Array(len(train_idx))
-    for p in range(len(train_idx)):
+    gene1 = sfix.Array(N)
+    for p in range(N):
                 gene1[p] = train_data[p][j]
     gene1, mean1 = bin_column(gene1, len(gene1))
     mean_matrix.append(mean1)
-    for p in range(len(train_idx)):
+    for p in range(N):
                 train_data[p][j] = gene1[p]
 stop_timer(200)
 print_ln('Binning complete (data remains secret)')
