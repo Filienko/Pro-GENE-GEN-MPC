@@ -75,7 +75,8 @@ class MPCProtocolExecutor:
         Args:
             protocol_name: Name of compiled protocol (without .mpc extension)
             num_parties: Number of MPC parties
-            args: List of command-line arguments to pass to the protocol
+            args: List of compile-time arguments used during compilation.
+                  If provided, they're appended to protocol_name with dashes.
 
         Returns:
             subprocess.CompletedProcess: Result of execution
@@ -89,10 +90,14 @@ class MPCProtocolExecutor:
         if not os.path.exists(protocol_script):
             raise FileNotFoundError(f"Protocol script not found at {protocol_script}")
 
-        cmd = [protocol_script, protocol_name]
-
+        # When compiled with args, MP-SPDZ creates files with args appended to name
+        # e.g., ppai_bin_msr-489-490-10-14.sch
+        # So we need to execute with: ring.sh ppai_bin_msr-489-490-10-14
+        full_protocol_name = protocol_name
         if args:
-            cmd.extend([str(arg) for arg in args])
+            full_protocol_name = protocol_name + "-" + "-".join([str(arg) for arg in args])
+
+        cmd = [protocol_script, full_protocol_name]
 
         try:
             result = subprocess.run(
@@ -433,16 +438,15 @@ class MPCMarginalComputer:
 
             print(f"  → Written to {input_file}")
 
-        # Prepare MPC arguments (runtime only, not compile-time)
+        # Prepare MPC arguments (compile-time constants)
         args = party_sizes + [num_genes, num_classes]
 
         print(f"\nCompiling integrated MPC protocol...")
-        # Compile WITHOUT args - they're runtime arguments (program.args)
-        self.executor.compile_protocol(protocol_name, args=None)
+        # Compile WITH args - creates ppai_bin_msr-489-490-10-14.sch
+        self.executor.compile_protocol(protocol_name, args=args)
 
         print(f"\nExecuting integrated MPC protocol (binning + MSR)...")
         print(f"  Party sizes: {party_sizes}")
-        print(f"  Runtime args: {args}")
         print(f"  SECURITY: Binned data will NEVER be revealed")
 
         result = self.executor.execute_protocol(
