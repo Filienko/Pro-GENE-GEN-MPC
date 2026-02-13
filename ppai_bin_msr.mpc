@@ -196,12 +196,12 @@ if target_delta > 0:
     # add gaussian noise
     w = 0.03230853348756192
     for i in range(num_genes):
-       for k in range(4 * num_classes):
+        for k in range(4 * num_classes):
            real_counts_2way[i][k] = real_counts_2way[i][k] * w + sigma * NormalSampler()
 else:
     # add laplace noise
     for i in range(num_genes):
-       for k in range(4 * num_classes):
+        for k in range(4 * num_classes):
            real_counts_2way[i][k] = real_counts_2way[i][k] + compute_laplace(sigma)
 stop_timer(400)
 
