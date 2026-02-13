@@ -24,7 +24,7 @@ data_1.input_from(1)
 ############# Combined data #############
 data = sfix.Matrix(N, num_genes+1)
 for i in range(num_patients_0):
-    data[i] = data_0[i]c
+    data[i] = data_0[i]
 
 for i in range(num_patients_1):
     data[i+num_patients_0] = data_1[i]
