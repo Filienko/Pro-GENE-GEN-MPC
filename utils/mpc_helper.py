@@ -465,6 +465,7 @@ class MPCMarginalComputer:
         print("="*80 + "\n")
 
         return measurements_1way, measurements_2way, bin_means_array
+
     def _parse_marginals_output(self, stdout, num_genes, num_classes):
             lines = stdout.split('\n')
             in_marginals_section = False
@@ -474,7 +475,7 @@ class MPCMarginalComputer:
             marginals_1way_features = []
             marginals_1way_labels = []
             marginals_2way = []
-            bin_means_list = []  # NEW: to hold the bin means
+            bin_means_list = []  # To hold the bin means
 
             for line in lines:
                 line = line.strip()
@@ -498,7 +499,9 @@ class MPCMarginalComputer:
                     in_marginals_section = True
                     continue
                 elif line == '=== MARGINALS_OUTPUT_END ===':
-                    break
+                    in_marginals_section = False  # <--- FIXED: Now it keeps reading!
+                    section = None
+                    continue
                 elif not in_marginals_section:
                     continue
 
@@ -534,8 +537,10 @@ class MPCMarginalComputer:
             bin_means_array = None
             if bin_means_list:
                 bin_means_array = np.array(bin_means_list).reshape(num_genes, 4)
+                print(f"  DEBUG: Successfully parsed {len(bin_means_list)} bin means.")
 
             return measurements_1way, measurements_2way, bin_means_array
+
 
     def compute_marginals_from_party_files(self, party_data_files, num_genes,
                                            num_classes, target_delta, sigma,
