@@ -110,18 +110,17 @@ print_ln('Computing marginals on binned data...')
 # Marginals computation - binned data stays secret!
 real_counts = sfix.Matrix(num_genes, 4)  # 1-way feature marginals
 real_counts_l = sfix.Array(num_classes)   # 1-way label marginals
-real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)  # 2-way marginals (flattened: n feature vals * m label vals)
+real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)  # 2-way marginals (flattened: 4 feature vals * num classes)
 
 # Compute marginals from binned training data
 for i in range(N):
     val_s = train_labels[i]
     
-    # --- YOUR NEW DYNAMIC CODE ---
     label_is = sfix.Array(num_classes)
     for l in range(num_classes):
         label_is[l] = (val_s == l)
     
-    # Update 1-way label marginals (CHANGE 5 TO num_classes)
+    # Update 1-way label marginals 
     for l in range(num_classes):
         real_counts_l[l] = real_counts_l[l] + label_is[l]
 
@@ -150,7 +149,6 @@ for i in range(N):
             feat_idx = f * num_classes
             feat_indicator = gene_is[f]
 
-            # Unroll the inner loop for better performance
             for c in range(num_classes):
                 real_counts_2way[j][feat_idx + c] = real_counts_2way[j][feat_idx + c] + feat_indicator * label_is[c]
 stop_timer(300)
@@ -208,42 +206,34 @@ stop_timer(400)
 
 ############# STEP 4: REVEAL ONLY NOISY MARGINALS #############
 start_timer(500)
+
 print_ln('=== MARGINALS_OUTPUT_START ===')
 
-# Output 1-way feature marginals (num_genes x 4)
+# Output 1-way feature marginals
 print_ln('1WAY_FEATURES:')
 for i in range(num_genes):
     for j in range(4):
         print_ln('%s', real_counts[i][j].reveal())
 
-# Output 1-way label marginals (num_classes)
+# Output 1-way label marginals 
 print_ln('1WAY_LABELS:')
 for i in range(num_classes):
     print_ln('%s', real_counts_l[i].reveal())
 
-# Output 2-way marginals (num_genes x 4 x num_classes)
+# Output 2-way marginals 
 print_ln('2WAY:')
 for i in range(num_genes):
-    for k in range(4 * num_classes):
     for k in range(4 * num_classes):
         print_ln('%s', real_counts_2way[i][k].reveal())
 
 print_ln('=== MARGINALS_OUTPUT_END ===')
-print_ln('2WAY:')
-for i in range(num_genes):
-    for k in range(4 * num_classes):
-        print_ln('%s', real_counts_2way[i][k].reveal())
 
-# --- ADD THIS NEW BLOCK BELOW ---
+# Output DP Bin Means
 print_ln('=== BIN_MEANS_START ===')
 for i in range(num_genes):
     for j in range(4):
         print_ln('%s', mean_matrix[i][j].reveal())
 print_ln('=== BIN_MEANS_END ===')
-# --- END OF NEW BLOCK ---
 
-print_ln('=== MARGINALS_OUTPUT_END ===')
 stop_timer(500)
-
-
 print_ln('Complete! Binned data never revealed - only noisy marginals output.')
