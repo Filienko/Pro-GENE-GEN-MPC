@@ -35,37 +35,38 @@ class MPCProtocolExecutor:
         Compile .mpc protocol file using MP-SPDZ compiler
 
         Args:
-            mpc_file: Path to .mpc file to compile
+            mpc_file: Protocol name (without .mpc extension) or path to .mpc file
             args: Optional list of compile-time arguments
 
         Returns:
             bool: True if compilation successful
         """
+        # Extract protocol name (remove .mpc if present)
+        protocol_name = mpc_file.replace('.mpc', '')
+
         compile_script = os.path.join(self.mpspdz_path, 'compile.py')
 
         if not os.path.exists(compile_script):
             raise FileNotFoundError(f"MP-SPDZ compile.py not found at {compile_script}")
 
-        # MP-SPDZ compile command with ring protocol support
-        cmd = [compile_script, '-R', '64', mpc_file]
+        # Build compilation command matching the user's pattern:
+        # cd PATH_MPC && ./compile.py -R 64 protocol_name arg1 arg2 ...
+        compile_cmd = f"cd {self.mpspdz_path} && ./compile.py -R 64 {protocol_name}"
 
-        # Add compile-time arguments if provided (needed for program.args)
+        # Add compile-time arguments if provided
         if args:
-            cmd.extend([str(arg) for arg in args])
+            compile_cmd += " " + " ".join([str(arg) for arg in args])
 
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=self.mpspdz_path,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            print(f"Compilation successful: {mpc_file}")
+        print(f"Compiling: {compile_cmd}")
+
+        # Execute compilation
+        result = os.system(compile_cmd)
+
+        if result == 0:
+            print(f"Compilation successful: {protocol_name}")
             return True
-        except subprocess.CalledProcessError as e:
-            print(f"Compilation failed: {e.stderr}")
-            raise RuntimeError(f"MPC compilation failed for {mpc_file}:\n{e.stderr}")
+        else:
+            raise RuntimeError(f"MPC compilation failed for {protocol_name} (exit code {result})")
 
     def execute_protocol(self, protocol_name, num_parties=2, args=None):
         """
