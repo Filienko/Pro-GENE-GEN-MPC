@@ -30,25 +30,13 @@ for i in range(num_patients_1):
     data[i+num_patients_0] = data_1[i]
 
 
-# Split into train/val
-indices = list(range(len(data)))
-random.shuffle(indices)
+# Use ALL data - no train/val split
+train_data = sfix.Matrix(N, num_genes)
+train_labels = sfix.Array(N)
 
-train_idx = indices[0:N-N//4]
-val_idx = indices[N-N//4:]
-
-train_data = sfix.Matrix(len(train_idx), num_genes)
-train_labels = sfix.Array(len(train_idx))
-val_data = sfix.Matrix(len(val_idx), num_genes)
-val_labels = sfix.Array(len(val_idx))
-
-for j,idx in enumerate(train_idx):
-         train_data[j] = data[idx][0:num_genes]
-         train_labels[j] = data[idx][num_genes]
-
-for j,idx in enumerate(val_idx):
-         val_data[j] = data[idx][0:num_genes]
-         val_labels[j] = data[idx][num_genes]
+for i in range(N):
+    train_data[i] = data[i][0:num_genes]
+    train_labels[i] = data[i][num_genes]
 
 def NormalSampler():
    sum_u = 0
