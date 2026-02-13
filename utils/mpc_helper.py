@@ -526,13 +526,13 @@ class MPCMarginalComputer:
         if current_values and section == '2way':
             print(f"  DEBUG: Collected {len(current_values)} 2-way values")
             print(f"  DEBUG: Expected {num_genes * 20} values")
-            # Reshape 2-way: one value per line, 20 values per gene
-            marginals_2way = np.array(current_values).reshape(-1, 20)
+            # Keep as 1D flattened array - _convert_to_measurements expects this format
+            marginals_2way = np.array(current_values)
 
         # Combine 1-way marginals: features (flattened) + labels
         marginals_1way_flat = marginals_1way_features.flatten()
         measurements_1way = np.concatenate([marginals_1way_flat, marginals_1way_labels])
-        measurements_2way = marginals_2way
+        measurements_2way = marginals_2way  # Already flattened
 
         print(f"  1-way marginals shape: {measurements_1way.shape}")
         print(f"  2-way marginals shape: {measurements_2way.shape}")
