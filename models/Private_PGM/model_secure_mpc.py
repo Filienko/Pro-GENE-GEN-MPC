@@ -240,6 +240,11 @@ class SecureMPCPrivatePGM:
         print("-"*80)
         print("All inputs are DP-protected - safe to process publicly")
 
+        print(f"\nDEBUG: marginals_1way shape: {marginals_1way.shape}")
+        print(f"DEBUG: marginals_2way shape: {marginals_2way.shape}")
+        print(f"DEBUG: config: {config}")
+        print(f"DEBUG: cliques: {cliques}")
+
         measurements = self._convert_to_measurements(
             marginals_1way,
             marginals_2way,
@@ -275,6 +280,12 @@ class SecureMPCPrivatePGM:
         measurements = []
         domain_keys = list(config.keys())
 
+        print(f"\nDEBUG _convert_to_measurements:")
+        print(f"  domain_keys: {domain_keys}")
+        print(f"  marginals_1way length: {len(marginals_1way)}")
+        print(f"  marginals_2way length: {len(marginals_2way)}")
+        print(f"  target_variable: {self.target_variable}")
+
         # Process 1-way marginals
         weights = np.ones(len(config))
         weights /= np.linalg.norm(weights)
@@ -307,11 +318,16 @@ class SecureMPCPrivatePGM:
         weights = np.ones(len(cliques))
         weights /= np.linalg.norm(weights)
 
+        print(f"  Processing {len(cliques)} 2-way cliques...")
         for clique_idx, (cl, wgt) in enumerate(zip(cliques, weights)):
             # Each 2-way marginal is 4 feature bins * num_classes label bins
             num_classes = config[self.target_variable]
             marginal_size = 4 * num_classes
-            y = marginals_2way[clique_idx * marginal_size:(clique_idx + 1) * marginal_size]
+            start_idx = clique_idx * marginal_size
+            end_idx = (clique_idx + 1) * marginal_size
+            print(f"    Clique {clique_idx} {cl}: marginal_size={marginal_size}, indices [{start_idx}:{end_idx}]")
+            y = marginals_2way[start_idx:end_idx]
+            print(f"      Got {len(y)} values")
             I = sparse.eye(len(y))
 
             if self.target_delta > 0:
@@ -319,6 +335,7 @@ class SecureMPCPrivatePGM:
             else:
                 measurements.append((I, y, sigma, cl))
 
+        print(f"\nDEBUG: Created {len(measurements)} total measurements")
         return measurements
 
     def _load_bin_means(self, filepath):
