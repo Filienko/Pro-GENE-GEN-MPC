@@ -14,5 +14,14 @@ eval/plots
 eval/stats_eval/margctgan
 eval/stats_eval/results
 
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
 *.csv
 *.zip
+
+# MPC-SPDZ
+mpc_spdz/

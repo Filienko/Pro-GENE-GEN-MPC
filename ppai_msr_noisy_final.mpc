@@ -95,21 +95,21 @@ def compute_laplace(sigma):
 
 ####### Noisy 1-way marginals
 if target_delta > 0:
-    # add guassian noise
+    # add gaussian noise
     # Weights
     w = 0.03229168418603133 # * (num_genes + 1) #[1] * (num_genes + 1), then l2 norm = 1, one MPC server can compute this as lens are public
     for i in range(num_genes):
-       for k in range(k):
+       for j in range(4):
            real_counts[i][j] = real_counts[i][j] * w + sigma * NormalSampler()
     for i in range(num_classes):
-           real_counts_l[i] = real_counts[i] * w + sigma * NormalSampler()
+           real_counts_l[i] = real_counts_l[i] * w + sigma * NormalSampler()
 else:
-    # add lapalce noise
+    # add laplace noise
     for i in range(num_genes):
-       for k in range(k):
+       for j in range(4):
            real_counts[i][j] = real_counts[i][j] + compute_laplace(sigma)  #np.random.laplace(loc=0, scale=sigma, size=x.size)
     for i in range(num_classes):
-           real_counts_l[i] = real_counts[i] + compute_laplace(sigma)
+           real_counts_l[i] = real_counts_l[i] + compute_laplace(sigma)
 
 
 
@@ -118,19 +118,51 @@ num_cliques = num_genes #one MPC server can compute this as lens are public
 
 
 ####### Noisy 2-way marginals
-if self.target_delta == 0:
-            sigma = 1.0 / num_cliques / 2.0
+if target_delta == 0:
+    sigma = 1.0 / num_cliques / 2.0
 
 if target_delta > 0:
-    # add guassian noise
+    # add gaussian noise
     # Weights
     w = 0.03230853348756192 #[0.03230853348756192] * num_genes #[1] * (num_genes + 1), then l2 norm = 1, one MPC server can compute this as lens are public
     for i in range(num_genes):
        for k in range(20):
-           real_counts_2way[i][j] = real_counts_2way[i][j] * w + sigma * NormalSampler()
+           real_counts_2way[i][k] = real_counts_2way[i][k] * w + sigma * NormalSampler()
 
 else:
-    # add lapalce noise
+    # add laplace noise
     for i in range(num_genes):
        for k in range(20):
-           real_counts_2way[i][j] = real_counts_2way[i][j] + compute_laplace(sigma)  #np.random.laplace(loc=0, scale=sigma, size=x.size)
+           real_counts_2way[i][k] = real_counts_2way[i][k] + compute_laplace(sigma)  #np.random.laplace(loc=0, scale=sigma, size=x.size)
+
+
+####### Output noisy marginals
+print_ln('=== MARGINALS_OUTPUT_START ===')
+
+# Output 1-way feature marginals (num_genes x 4)
+print_ln('1WAY_FEATURES:')
+for i in range(num_genes):
+    for j in range(4):
+        print_float_plain(real_counts[i][j].reveal())
+        if j < 3:
+            print_str(' ')
+    print_ln('')
+
+# Output 1-way label marginals (num_classes)
+print_ln('1WAY_LABELS:')
+for i in range(num_classes):
+    print_float_plain(real_counts_l[i].reveal())
+    if i < num_classes - 1:
+        print_str(' ')
+print_ln('')
+
+# Output 2-way marginals (num_genes x 20)
+print_ln('2WAY:')
+for i in range(num_genes):
+    for k in range(20):
+        print_float_plain(real_counts_2way[i][k].reveal())
+        if k < 19:
+            print_str(' ')
+    print_ln('')
+
+print_ln('=== MARGINALS_OUTPUT_END ===')

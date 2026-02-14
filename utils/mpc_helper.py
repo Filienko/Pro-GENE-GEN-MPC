@@ -1,0 +1,590 @@
+"""
+MPC Helper Module for integrating MP-SPDZ with Private-PGM
+
+This module provides utilities for executing MPC protocols with MP-SPDZ framework.
+"""
+
+import os
+import subprocess
+import numpy as np
+import tempfile
+from pathlib import Path
+
+
+class MPCProtocolExecutor:
+    """
+    Executor for MP-SPDZ protocols that handles compilation and execution
+    of .mpc files for secure multi-party computation.
+    """
+
+    def __init__(self, mpspdz_path=None, protocol="ring", working_dir=None):
+        """
+        Initialize MPC Protocol Executor
+
+        Args:
+            mpspdz_path: Path to MP-SPDZ installation (default: /home/mpcuser/MP-SPDZ/)
+            protocol: MPC protocol to use (default: ring)
+            working_dir: Working directory for MPC execution (default: current directory)
+        """
+        self.mpspdz_path = mpspdz_path or os.environ.get('MPSPDZ_PATH', '/home/mpcuser/MP-SPDZ/')
+        self.protocol = protocol
+        self.working_dir = working_dir or os.getcwd()
+
+    def compile_protocol(self, mpc_file, args=None):
+        """
+        Compile .mpc protocol file using MP-SPDZ compiler
+
+        Args:
+            mpc_file: Protocol name (without .mpc extension) or path to .mpc file
+            args: Optional list of compile-time arguments
+
+        Returns:
+            bool: True if compilation successful
+        """
+        # Extract protocol name (remove .mpc if present)
+        protocol_name = mpc_file.replace('.mpc', '')
+
+        compile_script = os.path.join(self.mpspdz_path, 'compile.py')
+
+        if not os.path.exists(compile_script):
+            raise FileNotFoundError(f"MP-SPDZ compile.py not found at {compile_script}")
+
+        # Build compilation command matching the user's pattern:
+        # cd PATH_MPC && ./compile.py -R 64 protocol_name arg1 arg2 ...
+        compile_cmd = f"cd {self.mpspdz_path} && ./compile.py -R 64 {protocol_name}"
+
+        # Add compile-time arguments if provided
+        if args:
+            compile_cmd += " " + " ".join([str(arg) for arg in args])
+
+        print(f"Compiling: {compile_cmd}")
+
+        # Execute compilation
+        result = os.system(compile_cmd)
+
+        if result == 0:
+            print(f"Compilation successful: {protocol_name}")
+            return True
+        else:
+            raise RuntimeError(f"MPC compilation failed for {protocol_name} (exit code {result})")
+
+    def execute_protocol(self, protocol_name, num_parties=2, args=None):
+        """
+        Execute compiled MPC protocol
+
+        Args:
+            protocol_name: Name of compiled protocol (without .mpc extension)
+            num_parties: Number of MPC parties
+            args: List of compile-time arguments used during compilation.
+                  If provided, they're appended to protocol_name with dashes.
+
+        Returns:
+            subprocess.CompletedProcess: Result of execution
+        """
+        protocol_script = os.path.join(
+            self.mpspdz_path,
+            'Scripts',
+            f'{self.protocol}.sh'
+        )
+
+        if not os.path.exists(protocol_script):
+            raise FileNotFoundError(f"Protocol script not found at {protocol_script}")
+
+        # When compiled with args, MP-SPDZ creates files with args appended to name
+        # e.g., ppai_bin_msr-489-490-10-14.sch
+        # So we need to execute with: ring.sh ppai_bin_msr-489-490-10-14
+        full_protocol_name = protocol_name
+        if args:
+            full_protocol_name = protocol_name + "-" + "-".join([str(arg) for arg in args])
+
+        cmd = [protocol_script, full_protocol_name]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=self.mpspdz_path,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result
+        except subprocess.CalledProcessError as e:
+            print(f"\n{'='*80}")
+            print(f"MPC PROTOCOL EXECUTION FAILED")
+            print(f"{'='*80}")
+            print(f"Command: {' '.join(cmd)}")
+            print(f"Exit code: {e.returncode}")
+            if e.stdout:
+                print(f"\n--- STDOUT ---")
+                print(e.stdout)
+            if e.stderr:
+                print(f"\n--- STDERR ---")
+                print(e.stderr)
+            print(f"{'='*80}\n")
+            raise
+
+
+class HorizontalDataSplitter:
+    """
+    Splits data horizontally across multiple parties for MPC computation.
+    Each party gets a subset of rows (patients/samples).
+    """
+
+    def __init__(self, num_parties=2):
+        """
+        Initialize data splitter
+
+        Args:
+            num_parties: Number of MPC parties to split data across
+        """
+        self.num_parties = num_parties
+
+    def split_data(self, data, party_ratios=None):
+        """
+        Split data horizontally across parties
+
+        Args:
+            data: numpy array or DataFrame to split
+            party_ratios: List of ratios for each party (default: equal split)
+
+        Returns:
+            list: List of data splits, one per party
+        """
+        n_samples = len(data)
+
+        if party_ratios is None:
+            # Equal split by default
+            party_ratios = [1.0 / self.num_parties] * self.num_parties
+
+        if abs(sum(party_ratios) - 1.0) > 1e-6:
+            raise ValueError("Party ratios must sum to 1.0")
+
+        splits = []
+        start_idx = 0
+
+        for i, ratio in enumerate(party_ratios):
+            if i == len(party_ratios) - 1:
+                # Last party gets remaining data
+                end_idx = n_samples
+            else:
+                end_idx = start_idx + int(n_samples * ratio)
+
+            splits.append(data[start_idx:end_idx])
+            start_idx = end_idx
+
+        return splits
+
+    def write_party_data(self, data_splits, output_dir, prefix="party_data"):
+        """
+        Write party data to CSV files for MPC input
+
+        Args:
+            data_splits: List of data arrays for each party
+            output_dir: Directory to write output files
+            prefix: Prefix for output filenames
+
+        Returns:
+            list: List of output file paths
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        output_files = []
+
+        for i, data in enumerate(data_splits):
+            filepath = os.path.join(output_dir, f"{prefix}_{i}.csv")
+            np.savetxt(filepath, data, delimiter=',')
+            output_files.append(filepath)
+
+        return output_files
+
+
+class MPCBinningComputer:
+    """
+    Performs secure binning using MPC protocols
+    """
+
+    def __init__(self, mpspdz_path=None, protocol="ring"):
+        """
+        Initialize MPC Binning Computer
+
+        Args:
+            mpspdz_path: Path to MP-SPDZ installation
+            protocol: MPC protocol to use
+        """
+        self.executor = MPCProtocolExecutor(mpspdz_path, protocol)
+        self.splitter = HorizontalDataSplitter(num_parties=2)
+
+    def _parse_binned_output(self, stdout):
+        """
+        Parse binned data output from ppai_bin.mpc stdout
+
+        Args:
+            stdout: Standard output from MPC execution
+
+        Returns:
+            list of lists: Binned data rows
+        """
+        lines = stdout.split('\n')
+        binned_data = []
+        in_output_section = False
+
+        for line in lines:
+            line = line.strip()
+            if line == '=== BINNING_OUTPUT_START ===':
+                in_output_section = True
+                continue
+            elif line == '=== BINNING_OUTPUT_END ===':
+                break
+            elif in_output_section and line:
+                # Skip the size line
+                if ' ' in line and not line.startswith('Binned'):
+                    parts = line.split()
+                    if len(parts) > 2:  # Data line
+                        binned_data.append([float(x) for x in parts])
+
+        if not binned_data:
+            raise ValueError("No binned data found in MPC output")
+
+        return binned_data
+
+
+class MPCMarginalComputer:
+    """
+    Computes marginals using MPC protocols for Private-PGM
+    """
+
+    def __init__(self, mpspdz_path=None, protocol="ring"):
+        """
+        Initialize MPC Marginal Computer
+
+        Args:
+            mpspdz_path: Path to MP-SPDZ installation
+            protocol: MPC protocol to use
+        """
+        self.executor = MPCProtocolExecutor(mpspdz_path, protocol)
+        self.splitter = HorizontalDataSplitter(num_parties=2)
+        self.binner = MPCBinningComputer(mpspdz_path, protocol)
+
+    def compute_marginals_with_binning(self, party_data_files, num_genes,
+                                       num_classes, target_delta, sigma):
+        """
+        Complete workflow: Bin data then compute noisy marginals (SECURE - no data leakage)
+
+        This method uses a combined MPC protocol (ppai_bin_msr.mpc) that:
+        1. Bins the data securely (stays secret)
+        2. Computes marginals on binned data (stays secret)
+        3. Adds DP noise (stays secret)
+        4. Only reveals final noisy marginals
+
+        SECURITY: Binned data is NEVER revealed - stays secret throughout
+
+        Args:
+            party_data_files: List of file paths containing data for each party
+            num_genes: Number of gene/feature columns
+            num_classes: Number of class labels
+            target_delta: Delta parameter for DP
+            sigma: Noise scale parameter
+
+        Returns:
+            tuple: (measurements_1way, measurements_2way) - both DP-protected
+        """
+        print("\n" + "="*80)
+        print("INTEGRATED MPC WORKFLOW: Binning → MSR (binned data stays secret)")
+        print("="*80)
+
+        protocol_name = 'ppai_bin_msr'
+        mpc_file_path = os.path.join(self.executor.mpspdz_path, f'{protocol_name}.mpc')
+
+        if not os.path.exists(mpc_file_path):
+            raise FileNotFoundError(
+                f"MPC protocol file not found: {mpc_file_path}\n"
+                f"Expected: ppai_bin_msr.mpc in {self.executor.mpspdz_path}"
+            )
+
+        # Calculate party sizes from input files
+        party_sizes = []
+        for party_file in party_data_files:
+            import pandas as pd
+            df = pd.read_csv(party_file)
+            party_sizes.append(len(df))
+
+        # Prepare MPC input files (raw data as secret shares)
+        player_data_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+        os.makedirs(player_data_dir, exist_ok=True)
+
+        print(f"Preparing MPC input files in {player_data_dir}...")
+        for party_idx, party_file in enumerate(party_data_files):
+            import pandas as pd
+            df = pd.read_csv(party_file)
+
+            # Filter to only numeric columns
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            df_numeric = df[numeric_cols]
+
+            print(f"  Party {party_idx}: {len(df)} rows, {len(numeric_cols)} numeric columns")
+
+            # Convert to numpy array (all numeric)
+            data_array = df_numeric.values
+
+            # Write in MP-SPDZ input format (space-separated scaled integers)
+            input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
+            with open(input_file, 'w') as f:
+                for row in data_array:
+                    # Best option: Write the raw floats/ints exactly as they are!
+                    str_row = [str(val) for val in row]
+                    f.write(' '.join(str_row) + '\n')
+
+            print(f"  → Written to {input_file}")
+
+        # Prepare MPC arguments (compile-time constants)
+        args = party_sizes + [num_genes, num_classes, int(sigma * 10000)]
+
+        print(f"\nCompiling integrated MPC protocol...")
+        # Compile WITH args - creates ppai_bin_msr-489-490-10-14.sch
+        self.executor.compile_protocol(protocol_name, args=args)
+
+        print(f"\nExecuting integrated MPC protocol (binning + MSR)...")
+        print(f"  Party sizes: {party_sizes}")
+        print(f"  SECURITY: Binned data will NEVER be revealed")
+
+        result = self.executor.execute_protocol(
+            protocol_name,
+            num_parties=len(party_sizes),
+            args=args
+        )
+
+        print("\nParsing noisy marginals and bin means from output...")
+        measurements_1way, measurements_2way, bin_means_array = self._parse_marginals_output(
+            result.stdout, num_genes, num_classes
+        )
+
+        print("\n" + "="*80)
+        print("✓ Complete! Only noisy marginals and means revealed - binned data stayed secret")
+        print("="*80 + "\n")
+
+        return measurements_1way, measurements_2way, bin_means_array
+
+    def _parse_marginals_output(self, stdout, num_genes, num_classes):
+            lines = stdout.split('\n')
+            in_marginals_section = False
+            in_means_section = False
+            section = None
+
+            marginals_1way_features = []
+            marginals_1way_labels = []
+            marginals_2way = []
+            bin_means_list = []  
+            current_values = [] 
+
+            for line in lines:
+                line = line.strip()
+
+                # 1. Handle Bin Means parsing
+                if line == '=== BIN_MEANS_START ===':
+                    in_means_section = True
+                    continue
+                elif line == '=== BIN_MEANS_END ===':
+                    in_means_section = False
+                    continue
+                elif in_means_section and line:
+                    try:
+                        bin_means_list.append(float(line.strip()))
+                    except ValueError:
+                        pass
+                    continue
+
+                # 2. Handle Marginals parsing
+                if line == '=== MARGINALS_OUTPUT_START ===':
+                    in_marginals_section = True
+                    continue
+                elif line == '=== MARGINALS_OUTPUT_END ===':
+                    # FIX: Save the 2-way marginals before closing the section
+                    if section == '2way' and current_values:
+                        marginals_2way = np.array(current_values)
+                    in_marginals_section = False  
+                    section = None
+                    current_values = []
+                    continue
+                elif not in_marginals_section:
+                    continue
+
+                # 3. Handle Transitions Between Marginal Sections
+                if line == '1WAY_FEATURES:':
+                    section = '1way_features'
+                    current_values = []
+                elif line == '1WAY_LABELS:':
+                    if section == '1way_features' and current_values:
+                        marginals_1way_features = np.array(current_values).reshape(-1, 4)
+                    section = '1way_labels'
+                    current_values = []
+                elif line == '2WAY:':
+                    if section == '1way_labels' and current_values:
+                        marginals_1way_labels = np.array(current_values)
+                    section = '2way'
+                    current_values = []
+                elif line and section:
+                    try:
+                        current_values.append(float(line.strip()))
+                    except ValueError:
+                        pass
+
+            # Fallbacks to ensure arrays are returned (prevents .shape crashes)
+            if isinstance(marginals_1way_features, list):
+                marginals_1way_features = np.array([]).reshape(0, 4)
+            if isinstance(marginals_1way_labels, list):
+                marginals_1way_labels = np.array(marginals_1way_labels)
+            if isinstance(marginals_2way, list):
+                marginals_2way = np.array(marginals_2way)
+
+            # Combine 1-way marginals
+            marginals_1way_flat = marginals_1way_features.flatten()
+            measurements_1way = np.concatenate([marginals_1way_flat, marginals_1way_labels])
+            measurements_2way = marginals_2way
+
+            # Convert bin means to numpy array
+            bin_means_array = None
+            if bin_means_list:
+                # Best option: No un-scaling needed, just reshape!
+                bin_means_array = np.array(bin_means_list).reshape(num_genes, 4)
+                print(f"  DEBUG: Successfully parsed {len(bin_means_list)} bin means.")
+
+            return measurements_1way, measurements_2way, bin_means_array
+
+    def compute_marginals_from_party_files(self, party_data_files, num_genes,
+                                           num_classes, target_delta, sigma,
+                                           mpc_protocol_file='ppai_msr_noisy_final'):
+        """
+        [DEPRECATED] Compute marginals using MPC from party data files
+
+        WARNING: This expects already binned data. Use compute_marginals_with_binning() instead
+        for the complete workflow.
+
+        Args:
+            party_data_files: List of file paths containing data for each party
+            num_genes: Number of gene/feature columns
+            num_classes: Number of class labels
+            target_delta: Delta parameter for DP
+            sigma: Noise scale parameter
+            mpc_protocol_file: Protocol name (without .mpc extension) or path to .mpc file
+
+        Returns:
+            tuple: (measurements_1way, measurements_2way) - both DP-protected
+        """
+        # Extract protocol name (remove .mpc extension if present)
+        protocol_name = Path(mpc_protocol_file).stem
+
+        # Check if .mpc file exists in MP-SPDZ directory
+        mpc_file_path = os.path.join(self.executor.mpspdz_path, f'{protocol_name}.mpc')
+        if not os.path.exists(mpc_file_path):
+            raise FileNotFoundError(
+                f"MPC marginal protocol file not found: {mpc_file_path}\n"
+                f"Expected: ppai_msr.mpc or ppai_msr_noisy_final.mpc in {self.executor.mpspdz_path}"
+            )
+
+        print(f"Using MPC marginal protocol: {protocol_name}.mpc")
+        print("SECURITY: Computing marginals securely - raw data never revealed")
+
+        # Calculate total samples from party files
+        n_samples = sum(
+            sum(1 for _ in open(f)) - 1  # Subtract header
+            for f in party_data_files
+        )
+
+        # Prepare MPC arguments
+        args = [n_samples, num_genes, num_classes]
+
+        print(f"Compiling MPC protocol with arguments: {args}")
+        # Compile MPC protocol WITH arguments (needed for program.args)
+        # Pass protocol name WITHOUT .mpc extension (MP-SPDZ expects this)
+        self.executor.compile_protocol(protocol_name, args=args)
+
+        print(f"Executing MPC marginal computation...")
+        print(f"Total samples (public): {n_samples}")
+        print(f"Number of parties: {len(party_data_files)}")
+
+        result = self.executor.execute_protocol(
+            protocol_name,
+            num_parties=len(party_data_files),
+            args=args
+        )
+
+        # Read results from MPC output
+        output_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+
+        # These outputs are DP-protected (noisy)
+        measurements_1way = self._read_mpc_output(
+            os.path.join(output_dir, 'marginals_1way.txt'),
+            num_genes * 4 + num_classes  # 4 bins per gene + label classes
+        )
+
+        measurements_2way = self._read_mpc_output(
+            os.path.join(output_dir, 'marginals_2way.txt'),
+            num_genes * 20  # 4 feature values * 5 label values per gene
+        )
+
+        print("✓ Marginals computed securely with DP protection")
+
+        return measurements_1way, measurements_2way
+
+    def compute_marginals_mpc(self, data, num_genes, num_classes,
+                               target_delta, sigma, mpc_protocol_file):
+        """
+        [DEPRECATED - INSECURE] Compute marginals from combined data
+
+        WARNING: This method combines data from all parties before MPC,
+        which reveals raw data. Use compute_marginals_from_party_files() instead.
+
+        Args:
+            data: Input data array (n_samples, n_features+1)
+            num_genes: Number of gene/feature columns
+            num_classes: Number of class labels
+            target_delta: Delta parameter for DP
+            sigma: Noise scale parameter
+            mpc_protocol_file: Path to .mpc protocol file for marginal computation
+
+        Returns:
+            tuple: (measurements_1way, measurements_2way)
+        """
+        print("WARNING: Using insecure method that exposes raw data!")
+        print("Consider using compute_marginals_from_party_files() instead")
+
+        # Split data between parties
+        data_splits = self.splitter.split_data(data, party_ratios=[0.5, 0.5])
+
+        # Write party data to temporary files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            party_files = self.splitter.write_party_data(
+                data_splits,
+                temp_dir,
+                prefix="mpc_input"
+            )
+
+            # Use the secure method
+            return self.compute_marginals_from_party_files(
+                party_files,
+                num_genes,
+                num_classes,
+                target_delta,
+                sigma,
+                mpc_protocol_file
+            )
+
+    def _read_mpc_output(self, filepath, *shape):
+        """
+        Read MPC output from file
+
+        Args:
+            filepath: Path to output file
+            shape: Shape dimensions for output array
+
+        Returns:
+            numpy array with output values
+        """
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"MPC output file not found: {filepath}")
+
+        data = np.loadtxt(filepath)
+
+        if shape:
+            data = data.reshape(shape)
+
+        return data

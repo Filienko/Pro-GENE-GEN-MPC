@@ -84,3 +84,17 @@ Our implementation uses the source code from the following repositories:
 
 ## References
 [1] Warnat-Herresthal, S., Perrakis, K., Taschler, B., Becker, M., Baßler, K., Beyer, M., Günther, P., Schulte-Schrepping, J., Seep, L., Klee, K. and Ulas, T., 2020. Scalable prediction of acute myeloid leukemia using high-dimensional machine learning and blood transcriptomics. Iscience, 23(1).
+
+
+
+
+The original code I used for the GE results for private pgm:
+
+python3 main.py --dataset bulk_aml --exp_name "test_real_data_100f_ep10" --preprocess discretize --preprocess_arg alpha=0.25 --enable_privacy --target_epsilon 10 --num_iters 10000 --test_frac 0.01
+
+python3 main.py --dataset bulk_aml --exp_name "test_real_data_100f_ep100" --preprocess discretize --preprocess_arg alpha=0.25 --enable_privacy --target_epsilon 100 --num_iters 1000 --test_frac 0.01 && python3 main.py --dataset bulk_aml --exp_name "test_real_data_100f_ep1" --preprocess discretize --preprocess_arg alpha=0.25 --enable_privacy --target_epsilon 1 --num_iters 1000 --test_frac 0.01
+
+
+and for VAE:
+
+python3 main.py --dataset bulk_aml --exp_name "vae_bulk_ep10" --preprocess discretize --enable_privacy --target_epsilon 10 --num_iters 100 --test_frac 0.01

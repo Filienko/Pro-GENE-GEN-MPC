@@ -1,0 +1,245 @@
+import math
+import random
+from Compiler import ml
+
+# ------------------------------------------------------------------
+# PART 1: SETUP & DATA LOADING
+# ------------------------------------------------------------------
+
+# Parse arguments
+# Args: [samples_party0, samples_party1, num_genes, num_classes]
+num_patients_0 = int(program.args[1]) 
+num_patients_1 = int(program.args[2]) 
+num_genes = int(program.args[3]) 
+num_classes = int(program.args[4]) 
+
+print_ln('Starting Secure Integrated Pipeline...')
+print_ln('Parties: 2, Genes: %s, Classes: %s', num_genes, num_classes)
+
+# Load Secret Shares
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+N_total = num_patients_0 + num_patients_1
+
+# Input from parties
+data_0.input_from(0)
+data_1.input_from(1)
+
+# Combine Data into one matrix
+data = sfix.Matrix(N_total, num_genes+1)
+
+@for_range_opt(num_patients_0)
+def _(i):
+    data[i] = data_0[i]
+
+@for_range_opt(num_patients_1)
+def _(i):
+    data[i+num_patients_0] = data_1[i]
+
+# Train/Val Split Logic
+# We create indices in Python
+indices = list(range(N_total))
+random.shuffle(indices) 
+
+train_len = N_total - N_total//4
+py_train_idx = indices[0:train_len]
+
+# === FIX APPLIED HERE ===
+# We must cast Python 'int' to MP-SPDZ 'regint' (register integer)
+# so the compiler knows how much memory to allocate.
+train_idx = Array.create_from([regint(x) for x in py_train_idx])
+
+train_data = sfix.Matrix(train_len, num_genes)
+train_labels = sfix.Array(train_len)
+
+print_ln('Splitting data... Training samples: %s', train_len)
+
+@for_range_opt(train_len)
+def _(j):
+    # 'j' is regint, 'train_idx' is Array of regints
+    idx = train_idx[j]
+    
+    # Copy features
+    train_data[j] = data[idx].get_vector(0, num_genes)
+    # Copy label
+    train_labels[j] = data[idx][num_genes]
+
+# ------------------------------------------------------------------
+# PART 2: SECURE BINNING
+# ------------------------------------------------------------------
+
+qtls = [0.25, 0.5, 0.75]
+
+def bin_column(gene_col, n):
+    # Sort and find quartiles
+    # gene_col is already sfix, so create_from works fine here
+    gene_sorted = Array.create_from(gene_col)
+    gene_sorted.sort()
+    
+    Q = sfix.Array(len(qtls))
+    for k, q in enumerate(qtls):
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        
+        val_floor = gene_sorted[floor_p]
+        val_ceil = gene_sorted[floor_p+1]
+        Q[k] = val_floor + f * (val_ceil - val_floor)
+
+    # Bin the data (0, 1, 2, 3)
+    @for_range_opt(n)
+    def _(i):
+        x = gene_col[i]
+        c0 = (x < Q[0])
+        c1 = (x < Q[1])
+        c2 = (x < Q[2])
+        gene_col[i] = 3 - c2 - c1 - c0
+
+    return gene_col
+
+print_ln('Binning features...')
+
+# Apply binning to all feature columns
+@for_range_opt(num_genes)
+def _(j):
+    col = sfix.Array(train_len)
+    
+    # Extract column
+    @for_range_opt(train_len)
+    def _(p):
+        col[p] = train_data[p][j]
+    
+    # Bin column (in-place modification of col)
+    binned_col = bin_column(col, train_len)
+    
+    # Write back
+    @for_range_opt(train_len)
+    def _(p):
+        train_data[p][j] = binned_col[p]
+
+print_ln('Binning complete. Data is now discrete (0-3).')
+
+# ------------------------------------------------------------------
+# PART 3: MARGINAL COMPUTATION
+# ------------------------------------------------------------------
+
+print_ln('Computing Marginals...')
+
+real_counts = sfix.Matrix(num_genes, 4)       # 1-way feature
+real_counts_l = sfix.Array(num_classes)       # 1-way label
+real_counts_2way = sfix.Matrix(num_genes, 20) # 2-way
+
+@for_range_opt(train_len)
+def _(i):
+    # 3.1 Process Label (Polynomial interpolation for 0..4)
+    val_s = train_labels[i]
+    label_is = sfix.Array(5)
+    
+    s_m_0 = val_s
+    s_m_1 = val_s - 1
+    s_m_2 = val_s - 2
+    s_m_3 = val_s - 3
+    s_m_4 = val_s - 4
+
+    label_is[0] = s_m_1 * s_m_2 * s_m_3 * s_m_4 / 24
+    label_is[1] = s_m_0 * s_m_2 * s_m_3 * s_m_4 / -6
+    label_is[2] = s_m_0 * s_m_1 * s_m_3 * s_m_4 / 4
+    label_is[3] = s_m_0 * s_m_1 * s_m_2 * s_m_4 / -6
+    label_is[4] = s_m_0 * s_m_1 * s_m_2 * s_m_3 / 24
+
+    # Update 1-way Label Marginals
+    @for_range_opt(5)
+    def _(l):
+        real_counts_l[l] = real_counts_l[l] + label_is[l]
+
+    # 3.2 Process Features & 2-Way Marginals
+    @for_range_opt(num_genes)
+    def _(j):
+        val_r = train_data[i][j]
+        
+        # Polynomial interpolation for feature bins (0..3)
+        r_m_0 = val_r
+        r_m_1 = val_r - 1
+        r_m_2 = val_r - 2
+        r_m_3 = val_r - 3
+
+        feat_is = sfix.Array(4)
+        feat_is[0] = r_m_1 * r_m_2 * r_m_3 / -6
+        feat_is[1] = r_m_0 * r_m_2 * r_m_3 / 2
+        feat_is[2] = r_m_0 * r_m_1 * r_m_3 / -2
+        feat_is[3] = r_m_0 * r_m_1 * r_m_2 / 6
+
+        # Update 1-way Feature Marginals
+        @for_range_opt(4)
+        def _(f):
+            real_counts[j][f] = real_counts[j][f] + feat_is[f]
+            
+            # Update 2-way Marginals (Outer product)
+            # Flattened index: f*5 + l
+            feat_val = feat_is[f]
+            base = f * 5
+            @for_range_opt(5)
+            def _(l):
+                real_counts_2way[j][base + l] = real_counts_2way[j][base + l] + (feat_val * label_is[l])
+
+# ------------------------------------------------------------------
+# PART 4: NOISE ADDITION & OUTPUT
+# ------------------------------------------------------------------
+
+print_ln('Adding DP Noise...')
+
+# Noise setup
+def NormalSampler():
+   sum_u = 0
+   for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+   sum_u = sum_u - 6
+   return sum_u
+
+sigma = 1.35 
+w = 0.032    
+
+# Add Noise
+@for_range_opt(num_genes)
+def _(j):
+    # 1-way
+    @for_range_opt(4)
+    def _(k):
+        real_counts[j][k] = real_counts[j][k] * w + sigma * NormalSampler()
+    
+    # 2-way
+    @for_range_opt(20)
+    def _(k):
+        real_counts_2way[j][k] = real_counts_2way[j][k] * w + sigma * NormalSampler()
+
+@for_range_opt(num_classes)
+def _(k):
+    real_counts_l[k] = real_counts_l[k] * w + sigma * NormalSampler()
+
+print_ln('Revealing Noisy Statistics...')
+
+# Output for Python
+print_ln('START_MARGINALS_1WAY')
+@for_range_opt(num_genes)
+def _(j):
+    row = real_counts[j].reveal()
+    for k in range(4):
+        print_str('%s ', row[k])
+    print_ln('')
+
+# Label marginals at the end
+label_row = real_counts_l.reveal()
+for k in range(num_classes):
+    print_str('%s ', label_row[k])
+print_ln('')
+print_ln('END_MARGINALS_1WAY')
+
+
+print_ln('START_MARGINALS_2WAY')
+@for_range_opt(num_genes)
+def _(j):
+    row = real_counts_2way[j].reveal()
+    for k in range(20):
+        print_str('%s ', row[k])
+    print_ln('')
+print_ln('END_MARGINALS_2WAY')
