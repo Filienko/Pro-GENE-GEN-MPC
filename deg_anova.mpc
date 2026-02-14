@@ -1,142 +1,151 @@
-# -----------------------------------------------------------------------
-# COMPILER ARGUMENT PARSING
-# Read dimensions dynamically during the compile step
-# -----------------------------------------------------------------------
-if len(program.args) < 6:
-    print("Error: Missing compiler arguments.")
-    print("Usage: ./compile.py secure_anova_dynamic <N_0> <N_1> <M> <C> <K>")
-    print("Example: ./compile.py secure_anova_dynamic 100 100 20000 14 50")
-    # Halt compilation if arguments are missing
-    raise Exception("Missing arguments")
+from Compiler import library
+from Compiler.types import sfix, cint, cfix, MemValue
 
-N_0 = int(program.args[1])  # Samples from Party 0
-N_1 = int(program.args[2])  # Samples from Party 1
-M   = int(program.args[3])  # Number of genes
-C   = int(program.args[4])  # Number of classes
-K   = int(program.args[5])  # Top-K genes to select
-N   = N_0 + N_1 
+print_ln(">> MPC Starting: Parsing arguments...")
 
-print(f"Compiling circuit for N={N} ({N_0} + {N_1}), M={M}, C={C}, Top-{K}...")
+n0 = int(program.args[1])
+n1 = int(program.args[2])
+total_n = n0 + n1
+m_genes = int(program.args[3])
+n_classes = int(program.args[4])
+k = int(program.args[5])
 
-# -----------------------------------------------------------------------
-# DATA STRUCTURE INITIALIZATION
-# -----------------------------------------------------------------------
-X = sfix.Matrix(N, M)
-Y = sint.Matrix(N, C) # One-hot encoded labels
+print_ln(">> Expected Inputs: N0=%s, N1=%s, Genes=%s, Classes=%s", n0, n1, m_genes, n_classes)
 
-# -----------------------------------------------------------------------
-# INPUT PHASE: Reading from Party 0 and Party 1
-# -----------------------------------------------------------------------
-# Read Party 0 data
-@for_range(N_0)
+X = sfix.Matrix(total_n, m_genes)
+Y = sfix.Matrix(total_n, n_classes)
+
+# ---------------------------------------------------------
+# PHASE 1: LOAD DATA
+# ---------------------------------------------------------
+print_ln(">> Phase 1: Loading data from Party 0...")
+@for_range(n0)
 def _(i):
-    @for_range(M)
+    @for_range(m_genes)
     def _(j):
         X[i][j] = sfix.get_input_from(0)
-    @for_range(C)
+    @for_range(n_classes)
     def _(c):
-        Y[i][c] = sint.get_input_from(0)
+        Y[i][c] = sfix.get_input_from(0)
 
-# Read Party 1 data
-@for_range(N_1)
+print_ln(">> Phase 1: Loading data from Party 1...")
+@for_range(n1)
 def _(i):
-    row_idx = N_0 + i
-    @for_range(M)
+    row_idx = n0 + i
+    @for_range(m_genes)
     def _(j):
         X[row_idx][j] = sfix.get_input_from(1)
-    @for_range(C)
+    @for_range(n_classes)
     def _(c):
-        Y[row_idx][c] = sint.get_input_from(1)
+        Y[row_idx][c] = sfix.get_input_from(1)
 
-# -----------------------------------------------------------------------
-# PHASE 1: Public Class Counts & Inverses
-# -----------------------------------------------------------------------
-n_c_sec = Array(C, sint)
-n_c_sec.assign_all(0)
+print_ln(">> Phase 1 Complete. All inputs loaded.")
 
-@for_range(N)
+# ---------------------------------------------------------
+# PHASE 2: COMPUTE CLASS SUMS AND COUNTS
+# ---------------------------------------------------------
+class_counts = sfix.Array(n_classes)
+class_sums = sfix.Matrix(n_classes, m_genes)
+class_counts.assign_all(0)
+class_sums.assign_all(0)
+
+@for_range(total_n)
 def _(i):
-    @for_range(C)
+    @for_range(n_classes)
     def _(c):
-        n_c_sec[c] += Y[i][c]
+        is_class = Y[i][c]
+        class_counts[c] = class_counts[c] + is_class
+        @for_range(m_genes)
+        def _(j):
+            class_sums[c][j] = class_sums[c][j] + (X[i][j] * is_class)
 
-# Reveal class counts to compute inverses in plaintext
-n_c_pub = Array(C, cint)
-n_c_inv = Array(C, cfix)
-@for_range(C)
+class_means = sfix.Matrix(n_classes, m_genes)
+@for_range(n_classes)
 def _(c):
-    n_c_pub[c] = n_c_sec[c].reveal()
-    # Prevent cleartext div-by-zero if a class is entirely missing
-    safe_nc = n_c_pub[c] + (n_c_pub[c] == 0)
-    n_c_inv[c] = cfix(1.0) / cfix(safe_nc)
-
-n_inv = cfix(1.0) / cfix(N)
-
-# -----------------------------------------------------------------------
-# PHASE 2 & 3: Compute SST, SSB, and SSW efficiently
-# -----------------------------------------------------------------------
-SSB = Array(M, sfix)
-SSW = Array(M, sfix)
-eps = sfix(0.0001)
-
-@for_range(M)
-def _(j):
-    S_j = sfix(0)
-    SumSq_j = sfix(0)
-    
-    @for_range(N)
-    def _(i):
-        S_j += X[i][j]
-        SumSq_j += X[i][j] * X[i][j]
-        
-    mu_j = S_j * n_inv
-    SST_j = SumSq_j - (cfix(N) * (mu_j * mu_j))
-    
-    ssb_temp = sfix(0)
-    @for_range(C)
-    def _(c):
-        S_cj = sfix(0)
-        @for_range(N)
-        def _(i):
-            S_cj += X[i][j] * sfix(Y[i][c])
-            
-        mu_cj = S_cj * n_c_inv[c]
-        delta = mu_cj - mu_j
-        ssb_temp += cfix(n_c_pub[c]) * (delta * delta)
-        
-    SSB[j] = ssb_temp
-    SSW[j] = SST_j - ssb_temp + eps 
-
-# -----------------------------------------------------------------------
-# PHASE 4: Division-Free Secure Top-K (Selection Sort)
-# -----------------------------------------------------------------------
-selected_indices = Array(K, sint)
-is_available = Array(M, sint)
-is_available.assign_all(1)
-
-@for_range(K)
-def _(k):
-    best_idx = sint(0)
-    best_SSB = sfix(-1)
-    best_SSW = sfix(1)
-    
-    @for_range(M)
+    # Epsilon added here in case a class has 0 samples
+    inv_count = 1.0 / (class_counts[c] + 0.000001) 
+    @for_range(m_genes)
     def _(j):
-        is_greater = (SSB[j] * best_SSW) > (best_SSB * SSW[j])
-        do_update = is_greater * is_available[j]
-        
-        best_idx = do_update.if_else(sint(j), best_idx)
-        best_SSB = do_update.if_else(SSB[j], best_SSB)
-        best_SSW = do_update.if_else(SSW[j], best_SSW)
-        
-    selected_indices[k] = best_idx
-    is_available[best_idx] = 0
+        class_means[c][j] = class_sums[c][j] * inv_count
 
-# -----------------------------------------------------------------------
-# OUTPUT
-# -----------------------------------------------------------------------
-print_ln("Top %s Differentially Expressed Gene Indices:", K)
-@for_range(K)
-def _(k):
-    revealed_idx = selected_indices[k].reveal()
-    print_ln("Rank %s: Gene Index %s", k + 1, revealed_idx)
+print_ln(">> Phase 2 Complete. Class sums and means calculated.")
+
+# ---------------------------------------------------------
+# PHASE 3: COMPUTE F-STATISTICS
+# ---------------------------------------------------------
+f_stats = sfix.Array(m_genes)
+df_between = n_classes - 1
+df_within = total_n - n_classes
+
+@for_range(m_genes)
+def _(j):
+    global_sum = MemValue(sfix(0))
+    @for_range(n_classes)
+    def _(c):
+        global_sum.write(global_sum.read() + class_sums[c][j])
+        
+    mu_total = global_sum.read() / total_n
+    
+    ssb = MemValue(sfix(0))
+    @for_range(n_classes)
+    def _(c):
+        diff = class_means[c][j] - mu_total
+        ssb.write(ssb.read() + class_counts[c] * diff * diff)
+        
+    ssw = MemValue(sfix(0))
+    @for_range(total_n)
+    def _(i):
+        @for_range(n_classes)
+        def _(c):
+            is_class = Y[i][c]
+            diff = X[i][j] - class_means[c][j]
+            ssw.write(ssw.read() + is_class * diff * diff)
+            
+    msb = ssb.read() / df_between
+    msw = ssw.read() / df_within
+    
+    # Epsilon added to denominator to prevent crash on zero-variance genes
+    f_stats[j] = msb / (msw + 0.000001)
+
+print_ln(">> Phase 3 Complete. F-statistics calculated. Proceeding to sort...")
+
+# ---------------------------------------------------------
+# PHASE 4: REVEAL AND SORT TOP-K
+# ---------------------------------------------------------
+f_clear = cfix.Array(m_genes)
+indices = cint.Array(m_genes)
+
+@for_range(m_genes)
+def _(j):
+    f_clear[j] = f_stats[j].reveal()
+    indices[j] = j
+
+# Cleartext Selection Sort
+@for_range(k)
+def _(step):
+    max_val = MemValue(f_clear[step])
+    max_idx = MemValue(cint(step))
+    
+    @for_range(step + 1, m_genes)
+    def _(j):
+        is_greater = f_clear[j] > max_val.read()
+        @if_(is_greater)
+        def _():
+            max_val.write(f_clear[j])
+            max_idx.write(cint(j))
+            
+    best_idx = max_idx.read()
+    
+    # Swap
+    temp_val = f_clear[step]
+    f_clear[step] = f_clear[best_idx]
+    f_clear[best_idx] = temp_val
+    
+    temp_idx = indices[step]
+    indices[step] = indices[best_idx]
+    indices[best_idx] = temp_idx
+    
+    print_ln('Rank %s: Feature %s', step, indices[step])
+
+print_ln(">> Protocol Complete.")
+

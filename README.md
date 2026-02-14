@@ -98,3 +98,17 @@ python3 main.py --dataset bulk_aml --exp_name "test_real_data_100f_ep100" --prep
 and for VAE:
 
 python3 main.py --dataset bulk_aml --exp_name "vae_bulk_ep10" --preprocess discretize --enable_privacy --target_epsilon 10 --num_iters 100 --test_frac 0.01
+
+
+FOR MPC
+
+cp deg_anova.mpc mpc_spdz/Programs/Source/
+
+python preprocess_for_mpc.py --input data/aml/counts_with_who2022_train_subset.csv     --output_prefix who_2022_mpc_100f --n_features 100 --label_col WHO_2022 --n_parties 2
+
+
+python3 run_secure_mpc_pipeline.py     --party_files data/aml/who_2022_4f_party_2.csv data/aml/who_2022_4f_party_1.csv     --output_path synthetic_mpc_4f.csv     --epsilon 10.0     --delta 1e-5     --mpspdz_path mpc_spdz/
+
+
+python evaluate_synthetic_quality.py     --synthetic_train synthetic_mpc_4f.csv     --real_train data/aml/counts_with_who2022_train_subset.csv     --real_test data/aml/counts_with_who2022_test_subset.csv     --real_label_col WHO_2022     --encoder label_encoding.json
+
