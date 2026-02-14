@@ -475,7 +475,8 @@ class MPCMarginalComputer:
             marginals_1way_features = []
             marginals_1way_labels = []
             marginals_2way = []
-            bin_means_list = []  # To hold the bin means
+            bin_means_list = []  
+            current_values = [] 
 
             for line in lines:
                 line = line.strip()
@@ -499,24 +500,29 @@ class MPCMarginalComputer:
                     in_marginals_section = True
                     continue
                 elif line == '=== MARGINALS_OUTPUT_END ===':
-                    in_marginals_section = False  # <--- FIXED: Now it keeps reading!
+                    # FIX: Save the 2-way marginals before closing the section
+                    if section == '2way' and current_values:
+                        marginals_2way = np.array(current_values)
+                    in_marginals_section = False  
                     section = None
+                    current_values = []
                     continue
                 elif not in_marginals_section:
                     continue
 
+                # 3. Handle Transitions Between Marginal Sections
                 if line == '1WAY_FEATURES:':
                     section = '1way_features'
                     current_values = []
                 elif line == '1WAY_LABELS:':
-                    section = '1way_labels'
-                    if current_values:
+                    if section == '1way_features' and current_values:
                         marginals_1way_features = np.array(current_values).reshape(-1, 4)
+                    section = '1way_labels'
                     current_values = []
                 elif line == '2WAY:':
-                    section = '2way'
-                    if current_values:
+                    if section == '1way_labels' and current_values:
                         marginals_1way_labels = np.array(current_values)
+                    section = '2way'
                     current_values = []
                 elif line and section:
                     try:
@@ -524,9 +530,13 @@ class MPCMarginalComputer:
                     except ValueError:
                         pass
 
-            # Process remaining values for 2-way marginals
-            if current_values and section == '2way':
-                marginals_2way = np.array(current_values)
+            # Fallbacks to ensure arrays are returned (prevents .shape crashes)
+            if isinstance(marginals_1way_features, list):
+                marginals_1way_features = np.array([]).reshape(0, 4)
+            if isinstance(marginals_1way_labels, list):
+                marginals_1way_labels = np.array(marginals_1way_labels)
+            if isinstance(marginals_2way, list):
+                marginals_2way = np.array(marginals_2way)
 
             # Combine 1-way marginals
             marginals_1way_flat = marginals_1way_features.flatten()
@@ -540,7 +550,6 @@ class MPCMarginalComputer:
                 print(f"  DEBUG: Successfully parsed {len(bin_means_list)} bin means.")
 
             return measurements_1way, measurements_2way, bin_means_array
-
 
     def compute_marginals_from_party_files(self, party_data_files, num_genes,
                                            num_classes, target_delta, sigma,
