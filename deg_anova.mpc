@@ -45,26 +45,30 @@ def _(i):
         Y[row_idx][c] = sfix.get_input_from(1)
 
 print_ln(">> Phase 1 Complete. All inputs loaded.")
-
 # ---------------------------------------------------------
-# PHASE 2: COMPUTE CLASS SUMS AND MEANS
+# PHASE 2: COMPUTE CLASS SUMS AND MEANS (Matrix Optimized)
 # ---------------------------------------------------------
 class_counts = sfix.Array(n_classes)
-class_sums = sfix.Matrix(n_classes, m_genes)
 class_counts.assign_all(0)
-class_sums.assign_all(0)
 
-print_ln(">> Phase 2: Computing secure sums and means...")
+print_ln(">> Phase 2: Computing secure sums and means via Matrix Math...")
+
+# 1. Transpose Y to Y_T (Size: C x N)
+Y_T = sfix.Matrix(n_classes, total_n)
 @for_range_opt(total_n)
 def _(i):
     @for_range_opt(n_classes)
     def _(c):
         is_class = Y[i][c]
+        Y_T[c][i] = is_class
+        # Calculate class counts for free during the transpose
         class_counts[c] = class_counts[c] + is_class
-        @for_range_opt(m_genes)
-        def _(j):
-            class_sums[c][j] = class_sums[c][j] + (X[i][j] * is_class)
 
+# 2. Native Matrix Multiplication! 
+# (Using .dot() instead of @ for MP-SPDZ compatibility)
+class_sums = Y_T.dot(X)
+
+# 3. Compute Class Means
 class_means = sfix.Matrix(n_classes, m_genes)
 @for_range_opt(n_classes)
 def _(c):
