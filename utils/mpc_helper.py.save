@@ -266,13 +266,11 @@ class MPCBinningComputer:
             data_array = df_numeric.values
 
             # Write in MP-SPDZ input format (space-separated values)
-            input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
             with open(input_file, 'w') as f:
                 for row in data_array:
                     # Best option: Write the raw floats/ints exactly as they are!
                     str_row = [str(val) for val in row]
                     f.write(' '.join(str_row) + '\n')
-
             print(f"  → Written to {input_file}")
 
         # Prepare MPC arguments
@@ -301,11 +299,10 @@ class MPCBinningComputer:
         binned_data_file = os.path.join(output_dir, 'binned_train.txt')
 
         # Write in MP-SPDZ input format (scaled integers, space-separated)
-        SCALE = 2 ** 16
         with open(binned_data_file, 'w') as f:
             for row in binned_data:
                 # Convert floats to scaled integers
-                scaled_row = [str(int(float(val) * SCALE)) for val in row]
+                scaled_row = [str(int(float(val))) for val in row]
                 f.write(' '.join(scaled_row) + '\n')
 
         print(f"✓ Binned data written to {binned_data_file}")
@@ -426,12 +423,12 @@ class MPCMarginalComputer:
             data_array = df_numeric.values
 
             # Write in MP-SPDZ input format (space-separated scaled integers)
+            SCALE = 2 ** 16
             input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
             with open(input_file, 'w') as f:
                 for row in data_array:
-                    # Best option: Write the raw floats/ints exactly as they are!
-                    str_row = [str(val) for val in row]
-                    f.write(' '.join(str_row) + '\n')
+                    scaled_row = [str(int(float(val) * SCALE)) for val in row]
+                    f.write(' '.join(scaled_row) + '\n')
 
             print(f"  → Written to {input_file}")
 
@@ -543,7 +540,6 @@ class MPCMarginalComputer:
             # Convert bin means to numpy array
             bin_means_array = None
             if bin_means_list:
-                # Best option: No un-scaling needed, just reshape!
                 bin_means_array = np.array(bin_means_list).reshape(num_genes, 4)
                 print(f"  DEBUG: Successfully parsed {len(bin_means_list)} bin means.")
 
