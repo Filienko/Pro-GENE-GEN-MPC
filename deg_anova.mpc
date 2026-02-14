@@ -1,10 +1,10 @@
-# MP-SPDZ Compiler Directives (Added based on your console output)
+# MP-SPDZ Compiler Directives
 program.use_trunc_pr = True
 program.use_split(3)
 
 from Compiler import library
-from Compiler.types import sfix, cint, cfix, MemValue
-from Compiler.library import for_range_opt, for_range
+from Compiler.types import sfix, sint, cint, cfix, MemValue
+from Compiler.library import for_range_opt, for_range, print_ln, if_
 
 print_ln(">> MPC Starting: Parsing arguments...")
 
@@ -45,6 +45,7 @@ def _(i):
         Y[row_idx][c] = sfix.get_input_from(1)
 
 print_ln(">> Phase 1 Complete. All inputs loaded.")
+
 # ---------------------------------------------------------
 # PHASE 2: COMPUTE CLASS SUMS AND MEANS (Matrix Optimized)
 # ---------------------------------------------------------
@@ -53,7 +54,6 @@ class_counts.assign_all(0)
 
 print_ln(">> Phase 2: Computing secure sums and means via Matrix Math...")
 
-# 1. Transpose Y to Y_T (Size: C x N)
 Y_T = sfix.Matrix(n_classes, total_n)
 @for_range_opt(total_n)
 def _(i):
@@ -61,19 +61,18 @@ def _(i):
     def _(c):
         is_class = Y[i][c]
         Y_T[c][i] = is_class
-        # Calculate class counts for free during the transpose
         class_counts[c] = class_counts[c] + is_class
 
-# 2. Native Matrix Multiplication! 
-# (Using .dot() instead of @ for MP-SPDZ compatibility)
 class_sums = Y_T.dot(X)
-
-# 3. Compute Class Means
 class_means = sfix.Matrix(n_classes, m_genes)
+
 @for_range_opt(n_classes)
 def _(c):
-    # Epsilon added here in case a class has 0 samples
-    inv_count = 1.0 / (class_counts[c] + 0.000001)
+    # FIX: Securely handle zero-count classes without epsilon explosion
+    is_empty = (class_counts[c] == 0)
+    safe_count = class_counts[c] + is_empty # If 0, becomes 1 to prevent div-by-zero
+    inv_count = (1.0 / safe_count) * (1 - is_empty) # If 0, mean becomes 0
+    
     @for_range_opt(m_genes)
     def _(j):
         class_means[c][j] = class_sums[c][j] * inv_count
@@ -81,83 +80,82 @@ def _(c):
 print_ln(">> Phase 2 Complete.")
 
 # ---------------------------------------------------------
-# PHASE 3: COMPUTE F-STATISTICS (Stable Mean-Centered Method)
+# PHASE 3: COMPUTE F-STATISTICS (Batched Vectorized Division)
 # ---------------------------------------------------------
 print_ln(">> Phase 3: Calculating F-statistics...")
 f_stats = sfix.Array(m_genes)
+
 df_between = n_classes - 1
 df_within = total_n - n_classes
 
+msb_arr = sfix.Array(m_genes)
+msw_arr = sfix.Array(m_genes)
+
 @for_range_opt(m_genes)
 def _(j):
-    # 1. Global Mean
     global_sum = MemValue(sfix(0))
     @for_range_opt(n_classes)
     def _(c):
         global_sum.write(global_sum.read() + class_sums[c][j])
-    
+
     mu_total = global_sum.read() / total_n
 
-    # 2. Total Sum of Squares (SST) - Stable formulation!
     sst = MemValue(sfix(0))
     @for_range_opt(total_n)
     def _(i):
         diff = X[i][j] - mu_total
         sst.write(sst.read() + diff * diff)
 
-    # 3. Between-Group Sum of Squares (SSB) - Stable formulation!
     ssb = MemValue(sfix(0))
     @for_range_opt(n_classes)
     def _(c):
         diff = class_means[c][j] - mu_total
         ssb.write(ssb.read() + class_counts[c] * diff * diff)
 
-    # 4. Derive SSW and F-stat
-    msb = ssb.read() / df_between
-    msw = (sst.read() - ssb.read()) / df_within
+    # FIX: Prevent catastrophic cancellation making SSW negative
+    raw_ssw = sst.read() - ssb.read()
+    is_positive = raw_ssw > 0
+    safe_ssw = raw_ssw * is_positive
 
-    f_stats[j] = msb / (msw + 0.000001)
+    msb_arr[j] = ssb.read() / df_between
+    msw_arr[j] = safe_ssw / df_within + 0.000001 # Small epsilon to prevent F-stat div-by-zero
 
-print_ln(">> Phase 3 Complete. Proceeding to sort...")
+# Vectorized Secret Division
+f_stats.assign_vector(msb_arr.get_vector() / msw_arr.get_vector())
+
+print_ln(">> Phase 3 Complete. Proceeding to SECURE sort...")
 
 # ---------------------------------------------------------
-# PHASE 4: REVEAL AND SORT TOP-K
+# PHASE 4: SECURE TOP-K EXTRACTION (Privacy Fix)
 # ---------------------------------------------------------
-f_clear = cfix.Array(m_genes)
-indices = cint.Array(m_genes)
+# Instead of revealing all F-stats, we perform a secure ArgMax k times.
+# We only reveal the final *index* of the top feature, keeping the stat secret.
 
-@for_range_opt(m_genes)
-def _(j):
-    f_clear[j] = f_stats[j].reveal()
-    indices[j] = j
-
-# Cleartext Selection Sort
 @for_range(k)
 def _(step):
-    max_val = MemValue(f_clear[step])
-    max_idx = MemValue(cint(step))
+    max_val = MemValue(f_stats[0])
+    max_idx = MemValue(sint(0)) # Secret integer for the index
 
-    @for_range(step + 1, m_genes)
+    @for_range(1, m_genes)
     def _(j):
-        is_greater = f_clear[j] > max_val.read()
-        @if_(is_greater)
-        def _():
-            max_val.write(f_clear[j])
-            max_idx.write(cint(j))
+        # Secure comparison (returns secret shared bit 0 or 1)
+        is_greater = f_stats[j] > max_val.read()
+        
+        # Multiplexer update: IF greater, take new val, ELSE keep old val
+        new_max_val = is_greater * f_stats[j] + (1 - is_greater) * max_val.read()
+        new_max_idx = is_greater * sint(j) + (1 - is_greater) * max_idx.read()
+        
+        max_val.write(new_max_val)
+        max_idx.write(new_max_idx)
 
-    best_idx = max_idx.read()
-
-    # Swap
-    temp_val = f_clear[step]
-    f_clear[step] = f_clear[best_idx]
-    f_clear[best_idx] = temp_val
-
-    temp_idx = indices[step]
-    indices[step] = indices[best_idx]
-    indices[best_idx] = temp_idx
-
-    # REVERTED: Exact original string format so Python parser works
-    print_ln('Rank %s: Feature %s', step, indices[step])
+    # Reveal ONLY the index of the highest scoring gene
+    best_idx_clear = max_idx.read().reveal()
+    
+    # Print the result
+    print_ln('Rank %s: Feature %s', step, best_idx_clear)
+    
+    # Mask out the selected feature so it isn't picked again
+    # Since the index is now public, we can safely use it as an array address
+    f_stats[best_idx_clear] = sfix(-1.0)
 
 print_ln(">> Protocol Complete.")
-
