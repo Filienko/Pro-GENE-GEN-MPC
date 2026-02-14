@@ -93,7 +93,7 @@ def validate_party_files(party_files):
 def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
                              mpspdz_path=None, bin_protocol='ppai_bin',
                              marginal_protocol='ppai_msr_noisy_final',
-                             num_iters=10000):
+                             num_iters=10000, top_k_genes=None):
     """
     Run the secure MPC pipeline with no data leakage
 
@@ -106,6 +106,7 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
         bin_protocol: MPC protocol for binning
         marginal_protocol: MPC protocol for marginals
         num_iters: Number of inference iterations
+        top_k_genes: Optional number of top DEGs to select (enables DEG filtering mode)
 
     Returns:
         DataFrame: Synthetic data
@@ -114,6 +115,10 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
     print("SECURE MPC PRIVATE-PGM PIPELINE")
     print("="*80)
     print("SECURITY: No raw data leakage - full MPC + DP protection")
+    if top_k_genes is not None:
+        print(f"MODE: DEG Filtering - Selecting top-{top_k_genes} genes with DP protection")
+    else:
+        print("MODE: Standard - Processing all genes")
     print("="*80)
 
     # Validate inputs
@@ -168,7 +173,8 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
         config=config,
         bin_protocol=bin_protocol,
         marginal_protocol=marginal_protocol,
-        num_iters=num_iters
+        num_iters=num_iters,
+        top_k_genes=top_k_genes
     )
 
     # Generate synthetic data
@@ -280,6 +286,12 @@ SECURITY GUARANTEE:
         default=10000,
         help='Number of inference iterations (default: 10000)'
     )
+    parser.add_argument(
+        '--top_k_genes',
+        type=int,
+        default=None,
+        help='Optional: Number of top DEGs to select using DP Exponential Mechanism (enables DEG filtering mode)'
+    )
 
     args = parser.parse_args()
 
@@ -292,7 +304,8 @@ SECURITY GUARANTEE:
         mpspdz_path=args.mpspdz_path,
         bin_protocol=args.bin_protocol,
         marginal_protocol=args.marginal_protocol,
-        num_iters=args.num_iters
+        num_iters=args.num_iters,
+        top_k_genes=args.top_k_genes
     )
 
     print("\n✓ SUCCESS - Secure synthetic data generated")

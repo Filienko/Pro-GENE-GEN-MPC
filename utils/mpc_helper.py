@@ -449,6 +449,181 @@ class MPCMarginalComputer:
 
             return measurements_1way, measurements_2way, bin_means_array
 
+    def compute_marginals_with_deg_filtering(self, party_data_files, num_genes,
+                                             num_classes, target_delta, sigma, top_k):
+        """
+        Complete workflow with DEG filtering: Select top-k DEGs, bin them, then compute noisy marginals
+
+        This method uses the integrated_dp_deg_pgm.mpc protocol that:
+        1. Performs ANOVA F-test to rank genes
+        2. Uses Exponential Mechanism (DP) to select top-k DEGs
+        3. Bins the selected k genes securely (stays secret)
+        4. Computes marginals on binned top-k genes (stays secret)
+        5. Adds DP noise (stays secret)
+        6. Only reveals final noisy marginals for k genes
+
+        SECURITY: Raw data and binned data are NEVER revealed - stays secret throughout
+
+        Args:
+            party_data_files: List of file paths containing data for each party
+            num_genes: Total number of gene/feature columns in original data
+            num_classes: Number of class labels
+            target_delta: Delta parameter for DP
+            sigma: Noise scale parameter
+            top_k: Number of top DEGs to select (k)
+
+        Returns:
+            tuple: (measurements_1way, measurements_2way, bin_means_array) - all DP-protected
+                   Note: measurements will be for k genes, not num_genes
+        """
+        print("\n" + "="*80)
+        print(f"INTEGRATED DEG FILTERING WORKFLOW: Top-{top_k} DEG Selection → Binning → MSR")
+        print("="*80)
+
+        protocol_name = 'integrated_dp_deg_pgm'
+        mpc_file_path = os.path.join(self.executor.mpspdz_path, f'{protocol_name}.mpc')
+
+        if not os.path.exists(mpc_file_path):
+            raise FileNotFoundError(
+                f"MPC protocol file not found: {mpc_file_path}\n"
+                f"Expected: integrated_dp_deg_pgm.mpc in {self.executor.mpspdz_path}"
+            )
+
+        # Calculate party sizes from input files
+        party_sizes = []
+        for party_file in party_data_files:
+            import pandas as pd
+            df = pd.read_csv(party_file)
+            party_sizes.append(len(df))
+
+        # Prepare MPC input files (raw data as secret shares)
+        player_data_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
+        os.makedirs(player_data_dir, exist_ok=True)
+
+        print(f"Preparing MPC input files in {player_data_dir}...")
+        for party_idx, party_file in enumerate(party_data_files):
+            import pandas as pd
+            df = pd.read_csv(party_file)
+
+            # Filter to only numeric columns
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            df_numeric = df[numeric_cols]
+
+            print(f"  Party {party_idx}: {len(df)} rows, {len(numeric_cols)} numeric columns")
+
+            # Convert to numpy array (all numeric)
+            data_array = df_numeric.values
+
+            # Write in MP-SPDZ input format (space-separated values)
+            input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
+            with open(input_file, 'w') as f:
+                for row in data_array:
+                    str_row = [str(val) for val in row]
+                    f.write(' '.join(str_row) + '\n')
+
+            print(f"  → Written to {input_file}")
+
+        # Prepare MPC arguments: [samples_party0, samples_party1, num_genes, num_classes, k]
+        args = party_sizes + [num_genes, num_classes, top_k]
+
+        print(f"\nCompiling integrated DEG filtering MPC protocol...")
+        print(f"  Arguments: party_sizes={party_sizes}, num_genes={num_genes}, num_classes={num_classes}, k={top_k}")
+        self.executor.compile_protocol(protocol_name, args=args)
+
+        print(f"\nExecuting integrated DEG filtering MPC protocol...")
+        print(f"  Party sizes: {party_sizes}")
+        print(f"  Total genes: {num_genes}, Selecting top-k: {top_k}")
+        print(f"  SECURITY: Raw data, DEG scores, and binned data will NEVER be revealed")
+
+        result = self.executor.execute_protocol(
+            protocol_name,
+            num_parties=len(party_sizes),
+            args=args
+        )
+
+        print("\nParsing noisy marginals and bin means from output...")
+        measurements_1way, measurements_2way, bin_means_array = self._parse_deg_marginals_output(
+            result.stdout, top_k, num_classes
+        )
+
+        print("\n" + "="*80)
+        print(f"✓ Complete! Selected {top_k} DEGs with DP protection")
+        print("✓ Only noisy marginals and means revealed - raw data and selections stayed secret")
+        print("="*80 + "\n")
+
+        return measurements_1way, measurements_2way, bin_means_array
+
+    def _parse_deg_marginals_output(self, stdout, k, num_classes):
+        """
+        Parse output from integrated_dp_deg_pgm.mpc protocol
+
+        Args:
+            stdout: Standard output from MPC execution
+            k: Number of top DEGs selected
+            num_classes: Number of class labels
+
+        Returns:
+            tuple: (measurements_1way, measurements_2way, bin_means_array)
+        """
+        lines = stdout.split('\n')
+        in_1way_section = False
+        in_2way_section = False
+
+        marginals_1way_data = []
+        marginals_2way_data = []
+
+        for line in lines:
+            line = line.strip()
+
+            # Parse 1-way marginals
+            if line == 'START_MARGINALS_1WAY':
+                in_1way_section = True
+                continue
+            elif line == 'END_MARGINALS_1WAY':
+                in_1way_section = False
+                continue
+            elif in_1way_section and line:
+                # Parse space-separated values
+                try:
+                    values = [float(x) for x in line.split()]
+                    marginals_1way_data.extend(values)
+                except ValueError:
+                    pass
+                continue
+
+            # Parse 2-way marginals
+            if line == 'START_MARGINALS_2WAY':
+                in_2way_section = True
+                continue
+            elif line == 'END_MARGINALS_2WAY':
+                in_2way_section = False
+                continue
+            elif in_2way_section and line:
+                # Parse space-separated values
+                try:
+                    values = [float(x) for x in line.split()]
+                    marginals_2way_data.extend(values)
+                except ValueError:
+                    pass
+                continue
+
+        # Convert to numpy arrays
+        # 1-way: k features (4 bins each) + num_classes label bins
+        # Last num_classes values are label marginals, rest are feature marginals
+        marginals_1way = np.array(marginals_1way_data)
+
+        # 2-way: k features * 20 values (4 feature bins * 5 label bins)
+        marginals_2way = np.array(marginals_2way_data)
+
+        # For DEG filtering, we don't have bin means since continuous data generation
+        # is not the primary use case (we're doing classification on selected features)
+        bin_means_array = None
+
+        print(f"  Parsed {len(marginals_1way)} 1-way marginal values (expected: {k*4 + num_classes})")
+        print(f"  Parsed {len(marginals_2way)} 2-way marginal values (expected: {k*20})")
+
+        return marginals_1way, marginals_2way, bin_means_array
+
     def compute_marginals_from_party_files(self, party_data_files, num_genes,
                                            num_classes, target_delta, sigma,
                                            mpc_protocol_file='ppai_msr_noisy_final'):

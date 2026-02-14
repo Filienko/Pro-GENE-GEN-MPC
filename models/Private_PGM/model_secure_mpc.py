@@ -141,7 +141,7 @@ class SecureMPCPrivatePGM:
     def train_from_party_files(self, party_data_files, config,
                                 bin_protocol='ppai_bin',
                                 marginal_protocol='ppai_msr_noisy_final',
-                                cliques=None, num_iters=10000):
+                                cliques=None, num_iters=10000, top_k_genes=None):
         """
         Train model from separate party data files (SECURE - no data leakage)
 
@@ -158,6 +158,7 @@ class SecureMPCPrivatePGM:
             marginal_protocol: MPC protocol for marginals (default: ppai_msr_noisy_final)
             cliques: List of clique tuples for 2-way marginals
             num_iters: Number of inference iterations
+            top_k_genes: Optional number of top DEGs to select (enables DEG filtering mode)
 
         Returns:
             None (model stored in self.model)
@@ -214,34 +215,74 @@ class SecureMPCPrivatePGM:
 
         print(f"Privacy noise (σ): {sigma_marginal}")
 
-        # INTEGRATED MPC WORKFLOW: Binning + Marginals (binned data stays secret!)
-        print("\nUsing integrated MPC protocol (ppai_bin_msr.mpc)")
-        print("SECURITY: Binned data will NEVER be revealed - stays secret throughout")
+        # Choose MPC workflow based on whether DEG filtering is enabled
+        if top_k_genes is not None:
+            # DEG FILTERING WORKFLOW: Select top-k DEGs, then bin and compute marginals
+            print(f"\nUsing DEG filtering MPC protocol (integrated_dp_deg_pgm.mpc) with k={top_k_genes}")
+            print("SECURITY: DEG selection, binning, and marginals all computed securely")
+            print("SECURITY: Only DP-protected top-k marginals will be revealed")
 
-        marginals_1way, marginals_2way, bin_means_array = self.mpc_computer.compute_marginals_with_binning(
-            party_data_files=party_data_files,
-            num_genes=num_genes,
-            num_classes=num_classes,
-            target_delta=self.target_delta,
-            sigma=sigma_marginal
-        )
+            marginals_1way, marginals_2way, bin_means_array = self.mpc_computer.compute_marginals_with_deg_filtering(
+                party_data_files=party_data_files,
+                num_genes=num_genes,
+                num_classes=num_classes,
+                target_delta=self.target_delta,
+                sigma=sigma_marginal,
+                top_k=top_k_genes
+            )
+
+            # Update num_genes to reflect the selected subset for downstream processing
+            effective_num_genes = top_k_genes
+            print(f"\n✓ DEG filtering complete: Using {effective_num_genes} selected genes")
+        else:
+            # STANDARD WORKFLOW: Binning + Marginals on all genes (binned data stays secret!)
+            print("\nUsing integrated MPC protocol (ppai_bin_msr.mpc)")
+            print("SECURITY: Binned data will NEVER be revealed - stays secret throughout")
+
+            marginals_1way, marginals_2way, bin_means_array = self.mpc_computer.compute_marginals_with_binning(
+                party_data_files=party_data_files,
+                num_genes=num_genes,
+                num_classes=num_classes,
+                target_delta=self.target_delta,
+                sigma=sigma_marginal
+            )
+
+            effective_num_genes = num_genes
 
         # Note: Integrated workflow doesn't separately output bin means
         # They are used internally for inverse binning within the MPC protocol
         if bin_means_array is not None:
             self.noisy_bin_means = {}
             domain_keys = list(config.keys())
-            for i in range(num_genes):
+            for i in range(effective_num_genes):
                 col_name = domain_keys[i]  # Map gene names back to their index
                 self.noisy_bin_means[col_name] = bin_means_array[i]
             print("✓ Successfully loaded DP-protected bin means for continuous data generation")
         else:
             self.noisy_bin_means = None
-            warnings.warn("Noisy bin means were not returned from MPC.")
+            if top_k_genes is None:
+                warnings.warn("Noisy bin means were not returned from MPC.")
 
         print(f"✓ Marginals computed with DP protection")
         print(f"  1-way marginals: {len(marginals_1way)} values (noisy)")
         print(f"  2-way marginals: {len(marginals_2way)} values (noisy)")
+
+        # Adjust config if using DEG filtering
+        if top_k_genes is not None:
+            # Create new config with only k selected genes plus label
+            deg_config = {}
+            for i in range(top_k_genes):
+                deg_config[f'gene_{i}'] = 4  # 4 bins per gene
+            deg_config[self.target_variable] = num_classes
+
+            # Update cliques to match new gene names
+            deg_cliques = []
+            for i in range(top_k_genes):
+                deg_cliques.append((f'gene_{i}', self.target_variable))
+
+            config = deg_config
+            cliques = deg_cliques
+            print(f"\n✓ Adjusted config for {top_k_genes} selected DEGs")
 
         # STEP 3: Public Inference (on noisy public statistics)
         print("\n" + "-"*80)
