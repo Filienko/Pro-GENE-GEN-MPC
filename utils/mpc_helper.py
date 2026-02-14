@@ -213,106 +213,6 @@ class MPCBinningComputer:
         self.executor = MPCProtocolExecutor(mpspdz_path, protocol)
         self.splitter = HorizontalDataSplitter(num_parties=2)
 
-    def bin_data_mpc(self, party_data_files, num_genes, num_classes,
-                     mpc_protocol_file='ppai_bin'):
-        """
-        Bin SCALE = 2 ** 16data using MPC protocol - ensures raw data never revealed
-
-        Args:
-            party_data_files: List of file paths containing data for each party
-            num_genes: Number of gene/feature columns
-            num_classes: Number of class labels
-            mpc_protocol_file: Protocol name (without .mpc extension) or path to .mpc file
-
-        Returns:
-            tuple: (binned_data_file, noisy_bin_means_file)
-        """
-        # Extract protocol name (remove .mpc extension if present)
-        protocol_name = Path(mpc_protocol_file).stem
-
-        # Check if .mpc file exists in MP-SPDZ directory
-        mpc_file_path = os.path.join(self.executor.mpspdz_path, f'{protocol_name}.mpc')
-        if not os.path.exists(mpc_file_path):
-            raise FileNotFoundError(
-                f"MPC binning protocol file not found: {mpc_file_path}\n"
-                f"Expected one of: ppai_bin.mpc, ppai_bin_opt.mpc, ppai_bin_test.mpc in {self.executor.mpspdz_path}"
-            )
-
-        print(f"Using MPC binning protocol: {protocol_name}.mpc")
-        print("SECURITY: Raw data will never be revealed - all binning done in MPC")
-
-        # Calculate party sizes from input files
-        party_sizes = []
-        for party_file in party_data_files:
-            with open(party_file, 'r') as f:
-                party_sizes.append(sum(1 for _ in f) - 1)  # Subtract header
-
-        # Prepare MPC input files (raw data as secret shares)
-        player_data_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
-        os.makedirs(player_data_dir, exist_ok=True)
-
-        print(f"Preparing MPC input files in {player_data_dir}...")
-        for party_idx, party_file in enumerate(party_data_files):
-            import pandas as pd
-            df = pd.read_csv(party_file)
-
-            # Filter to only numeric columns (remove IDs, string columns)
-            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-            df_numeric = df[numeric_cols]
-
-            print(f"  Party {party_idx}: {len(df)} rows, {len(numeric_cols)} numeric columns")
-
-            # Convert to numpy array (all numeric)
-            data_array = df_numeric.values
-
-            # Write in MP-SPDZ input format (space-separated values)
-            input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
-            with open(input_file, 'w') as f:
-                for row in data_array:
-                    # Best option: Write the raw floats/ints exactly as they are!
-                    str_row = [str(val) for val in row]
-                    f.write(' '.join(str_row) + '\n')
-
-            print(f"  → Written to {input_file}")
-
-        # Prepare MPC arguments
-        args = party_sizes + [num_genes, num_classes]
-
-        print(f"Compiling MPC protocol with arguments: {args}")
-        # Compile MPC protocol WITH arguments (needed for program.args)
-        # Pass protocol name WITHOUT .mpc extension (MP-SPDZ expects this)
-        self.executor.compile_protocol(protocol_name, args=args)
-
-        print(f"Executing MPC binning with {len(party_sizes)} parties...")
-        print(f"Party sizes: {party_sizes}")
-
-        result = self.executor.execute_protocol(
-            protocol_name,
-            num_parties=len(party_sizes),
-            args=args
-        )
-
-        # Parse binned data from stdout
-        print("Parsing binned data from MPC output...")
-        binned_data = self._parse_binned_output(result.stdout)
-
-        # Write binned data to file for next MPC stage
-        output_dir = os.path.join(self.executor.mpspdz_path, 'Player-Data')
-        binned_data_file = os.path.join(output_dir, 'binned_train.txt')
-
-        # Write in MP-SPDZ input format (scaled integers, space-separated)
-        SCALE = 2 ** 16
-        with open(binned_data_file, 'w') as f:
-            for row in binned_data:
-                # Convert floats to scaled integers
-                scaled_row = [str(int(float(val) * SCALE)) for val in row]
-                f.write(' '.join(scaled_row) + '\n')
-
-        print(f"✓ Binned data written to {binned_data_file}")
-        print(f"  Shape: {len(binned_data)} samples x {len(binned_data[0])} features")
-
-        return binned_data_file
-
     def _parse_binned_output(self, stdout):
         """
         Parse binned data output from ppai_bin.mpc stdout
@@ -436,7 +336,7 @@ class MPCMarginalComputer:
             print(f"  → Written to {input_file}")
 
         # Prepare MPC arguments (compile-time constants)
-        args = party_sizes + [num_genes, num_classes]
+        args = party_sizes + [num_genes, num_classes, int(sigma * 10000)]
 
         print(f"\nCompiling integrated MPC protocol...")
         # Compile WITH args - creates ppai_bin_msr-489-490-10-14.sch

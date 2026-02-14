@@ -159,7 +159,8 @@ start_timer(400)
 print_ln('Adding DP noise...')
 
 target_delta = 1e-5
-sigma = 1.349069114347003
+sigma_int = int(program.args[5])
+sigma = sfix(sigma_int) / sfix(10000.0)
 
 def compute_laplace(sigma):
    sum_u = 0
