@@ -375,17 +375,18 @@ class SecureMPCPrivatePGM:
     def generate(self, num_rows=None):
         """
         Generate synthetic data
-
-        Args:
-            num_rows: Number of rows to generate
-
-        Returns:
-            numpy array: Synthetic data
         """
         if self.model is None:
             raise ValueError("Model not trained. Call train_from_party_files() first.")
 
         syn_df = self.model.synthetic_data(rows=num_rows).df
+        
+        # SAFTEY FIX: Private-PGM can sometimes generate NaNs if DP noise 
+        # causes zeroed probabilities. We fill them with bin 0 to prevent crashes.
+        if syn_df.isnull().values.any():
+            warnings.warn("NaNs detected in generated synthetic data. Filling with default bin 0.")
+            syn_df = syn_df.fillna(0)
+
         X_syn = syn_df.drop([self.target_variable], axis=1).values
         y_syn = syn_df[self.target_variable].values
         return np.concatenate([X_syn, np.expand_dims(y_syn, axis=1)], axis=1)
@@ -394,12 +395,6 @@ class SecureMPCPrivatePGM:
         """
         Generate synthetic data and convert back to continuous values
         using noisy bin means (DP-protected)
-
-        Args:
-            num_rows: Number of rows to generate
-
-        Returns:
-            numpy array: Synthetic continuous data
         """
         discrete_data = self.generate(num_rows)
 
@@ -408,13 +403,21 @@ class SecureMPCPrivatePGM:
             return discrete_data
 
         # Convert using noisy bin means (which are DP-protected)
-        continuous_data = discrete_data.copy()
+        continuous_data = discrete_data.astype(float)
 
         for col_idx, (col_name, bin_means) in enumerate(self.noisy_bin_means.items()):
             if col_idx < discrete_data.shape[1] - 1:  # Exclude label column
                 for i in range(len(discrete_data)):
-                    bin_idx = int(discrete_data[i, col_idx])
+                    val = discrete_data[i, col_idx]
+                    
+                    # Extra safety check against NaNs
+                    if np.isnan(val):
+                        bin_idx = 0
+                    else:
+                        bin_idx = int(val)
+                        
                     if 0 <= bin_idx < len(bin_means):
                         continuous_data[i, col_idx] = bin_means[bin_idx]
 
         return continuous_data
+

@@ -144,7 +144,7 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
     print("\n" + "="*80)
     print("INITIALIZING SECURE MPC MODEL")
     print("="*80)
-
+    print("configs", config)
     model = SecureMPCPrivatePGM(
         target_variable='label',
         enable_privacy=True,

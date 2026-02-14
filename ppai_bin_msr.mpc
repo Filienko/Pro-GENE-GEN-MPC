@@ -1,4 +1,4 @@
-import math
+sigma = sfix(1.5)import math
 import random
 from Compiler import ml
 
@@ -77,7 +77,7 @@ def bin_column(gene1,n):
             c = (gene1[i] == b)
             mean[b] = mean[b] + c * gene1_q[i]
             count[b] = count[b] + c
-    sigma = sfix(1.5)
+    sigma = sfix(0)
     for i in range(len(mean)):
         mean[i] = mean[i]/count[i]
         mean[i] = mean[i] + sigma * NormalSampler()
@@ -174,9 +174,9 @@ if target_delta > 0:
     w = 0.03229168418603133
     for i in range(num_genes):
        for j in range(4):
-           real_counts[i][j] = real_counts[i][j] * w + sigma * NormalSampler()
+           real_counts[i][j] = real_counts[i][j] + sigma * NormalSampler()
     for i in range(num_classes):
-           real_counts_l[i] = real_counts_l[i] * w + sigma * NormalSampler()
+           real_counts_l[i] = real_counts_l[i] + sigma * NormalSampler()
 else:
     # add laplace noise
     for i in range(num_genes):
@@ -195,7 +195,7 @@ if target_delta > 0:
     w = 0.03230853348756192
     for i in range(num_genes):
         for k in range(4 * num_classes):
-           real_counts_2way[i][k] = real_counts_2way[i][k] * w + sigma * NormalSampler()
+           real_counts_2way[i][k] = real_counts_2way[i][k] + sigma * NormalSampler()
 else:
     # add laplace noise
     for i in range(num_genes):

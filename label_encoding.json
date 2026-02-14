@@ -1,0 +1,35 @@
+{
+  "label_to_int": {
+    "AML, no RGA found": 0,
+    "AML, rare RGA": 1,
+    "AML-MRC": 2,
+    "BCR_ABL1": 3,
+    "CBFB-MYH11": 4,
+    "CEBPA_bZIP_indel": 5,
+    "DEK-NUP214": 6,
+    "GATA2, MECOM": 7,
+    "Inconclusive": 8,
+    "KMT2A": 9,
+    "NPM1": 10,
+    "NUP98": 11,
+    "PML-RARA": 12,
+    "RUNX1-RUNX1T1": 13
+  },
+  "int_to_label": {
+    "0": "AML, no RGA found",
+    "1": "AML, rare RGA",
+    "2": "AML-MRC",
+    "3": "BCR_ABL1",
+    "4": "CBFB-MYH11",
+    "5": "CEBPA_bZIP_indel",
+    "6": "DEK-NUP214",
+    "7": "GATA2, MECOM",
+    "8": "Inconclusive",
+    "9": "KMT2A",
+    "10": "NPM1",
+    "11": "NUP98",
+    "12": "PML-RARA",
+    "13": "RUNX1-RUNX1T1"
+  },
+  "num_classes": 14
+}
