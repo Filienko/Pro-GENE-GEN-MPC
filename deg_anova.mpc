@@ -1,5 +1,10 @@
+# MP-SPDZ Compiler Directives (Added based on your console output)
+program.use_trunc_pr = True
+program.use_split(3)
+
 from Compiler import library
 from Compiler.types import sfix, cint, cfix, MemValue
+from Compiler.library import for_range_opt, for_range
 
 print_ln(">> MPC Starting: Parsing arguments...")
 
@@ -19,95 +24,97 @@ Y = sfix.Matrix(total_n, n_classes)
 # PHASE 1: LOAD DATA
 # ---------------------------------------------------------
 print_ln(">> Phase 1: Loading data from Party 0...")
-@for_range(n0)
+@for_range_opt(n0)
 def _(i):
-    @for_range(m_genes)
+    @for_range_opt(m_genes)
     def _(j):
         X[i][j] = sfix.get_input_from(0)
-    @for_range(n_classes)
+    @for_range_opt(n_classes)
     def _(c):
         Y[i][c] = sfix.get_input_from(0)
 
 print_ln(">> Phase 1: Loading data from Party 1...")
-@for_range(n1)
+@for_range_opt(n1)
 def _(i):
     row_idx = n0 + i
-    @for_range(m_genes)
+    @for_range_opt(m_genes)
     def _(j):
         X[row_idx][j] = sfix.get_input_from(1)
-    @for_range(n_classes)
+    @for_range_opt(n_classes)
     def _(c):
         Y[row_idx][c] = sfix.get_input_from(1)
 
 print_ln(">> Phase 1 Complete. All inputs loaded.")
 
 # ---------------------------------------------------------
-# PHASE 2: COMPUTE CLASS SUMS AND COUNTS
+# PHASE 2: COMPUTE CLASS SUMS AND MEANS
 # ---------------------------------------------------------
 class_counts = sfix.Array(n_classes)
 class_sums = sfix.Matrix(n_classes, m_genes)
 class_counts.assign_all(0)
 class_sums.assign_all(0)
 
-@for_range(total_n)
+print_ln(">> Phase 2: Computing secure sums and means...")
+@for_range_opt(total_n)
 def _(i):
-    @for_range(n_classes)
+    @for_range_opt(n_classes)
     def _(c):
         is_class = Y[i][c]
         class_counts[c] = class_counts[c] + is_class
-        @for_range(m_genes)
+        @for_range_opt(m_genes)
         def _(j):
             class_sums[c][j] = class_sums[c][j] + (X[i][j] * is_class)
 
 class_means = sfix.Matrix(n_classes, m_genes)
-@for_range(n_classes)
+@for_range_opt(n_classes)
 def _(c):
     # Epsilon added here in case a class has 0 samples
-    inv_count = 1.0 / (class_counts[c] + 0.000001) 
-    @for_range(m_genes)
+    inv_count = 1.0 / (class_counts[c] + 0.000001)
+    @for_range_opt(m_genes)
     def _(j):
         class_means[c][j] = class_sums[c][j] * inv_count
 
-print_ln(">> Phase 2 Complete. Class sums and means calculated.")
+print_ln(">> Phase 2 Complete.")
 
 # ---------------------------------------------------------
-# PHASE 3: COMPUTE F-STATISTICS
+# PHASE 3: COMPUTE F-STATISTICS (Stable Mean-Centered Method)
 # ---------------------------------------------------------
+print_ln(">> Phase 3: Calculating F-statistics...")
 f_stats = sfix.Array(m_genes)
 df_between = n_classes - 1
 df_within = total_n - n_classes
 
-@for_range(m_genes)
+@for_range_opt(m_genes)
 def _(j):
+    # 1. Global Mean
     global_sum = MemValue(sfix(0))
-    @for_range(n_classes)
+    @for_range_opt(n_classes)
     def _(c):
         global_sum.write(global_sum.read() + class_sums[c][j])
-        
-    mu_total = global_sum.read() / total_n
     
+    mu_total = global_sum.read() / total_n
+
+    # 2. Total Sum of Squares (SST) - Stable formulation!
+    sst = MemValue(sfix(0))
+    @for_range_opt(total_n)
+    def _(i):
+        diff = X[i][j] - mu_total
+        sst.write(sst.read() + diff * diff)
+
+    # 3. Between-Group Sum of Squares (SSB) - Stable formulation!
     ssb = MemValue(sfix(0))
-    @for_range(n_classes)
+    @for_range_opt(n_classes)
     def _(c):
         diff = class_means[c][j] - mu_total
         ssb.write(ssb.read() + class_counts[c] * diff * diff)
-        
-    ssw = MemValue(sfix(0))
-    @for_range(total_n)
-    def _(i):
-        @for_range(n_classes)
-        def _(c):
-            is_class = Y[i][c]
-            diff = X[i][j] - class_means[c][j]
-            ssw.write(ssw.read() + is_class * diff * diff)
-            
+
+    # 4. Derive SSW and F-stat
     msb = ssb.read() / df_between
-    msw = ssw.read() / df_within
-    
-    # Epsilon added to denominator to prevent crash on zero-variance genes
+    msw = (sst.read() - ssb.read()) / df_within
+
     f_stats[j] = msb / (msw + 0.000001)
 
-print_ln(">> Phase 3 Complete. F-statistics calculated. Proceeding to sort...")
+print_ln(">> Phase 3 Complete. Proceeding to sort...")
 
 # ---------------------------------------------------------
 # PHASE 4: REVEAL AND SORT TOP-K
@@ -115,7 +122,7 @@ print_ln(">> Phase 3 Complete. F-statistics calculated. Proceeding to sort...")
 f_clear = cfix.Array(m_genes)
 indices = cint.Array(m_genes)
 
-@for_range(m_genes)
+@for_range_opt(m_genes)
 def _(j):
     f_clear[j] = f_stats[j].reveal()
     indices[j] = j
@@ -125,7 +132,7 @@ def _(j):
 def _(step):
     max_val = MemValue(f_clear[step])
     max_idx = MemValue(cint(step))
-    
+
     @for_range(step + 1, m_genes)
     def _(j):
         is_greater = f_clear[j] > max_val.read()
@@ -133,18 +140,19 @@ def _(step):
         def _():
             max_val.write(f_clear[j])
             max_idx.write(cint(j))
-            
+
     best_idx = max_idx.read()
-    
+
     # Swap
     temp_val = f_clear[step]
     f_clear[step] = f_clear[best_idx]
     f_clear[best_idx] = temp_val
-    
+
     temp_idx = indices[step]
     indices[step] = indices[best_idx]
     indices[best_idx] = temp_idx
-    
+
+    # REVERTED: Exact original string format so Python parser works
     print_ln('Rank %s: Feature %s', step, indices[step])
 
 print_ln(">> Protocol Complete.")
