@@ -57,6 +57,30 @@ for i in range(N):
     train_data[i] = data[i][0:num_genes]
     train_labels[i] = data[i][num_genes]
 
+def pi_GAUSS(length):
+    """
+    Algorithm 6: Protocol to sample from Gaussian distribution N(0, 1)
+    Outputs an array of secret shares of drawn samples [[γ]]
+    """
+    # 1: Initialize vector [[γ]] of length with 0s
+    gamma = sfix.Array(length)
+    
+    # 2: for i = 0 to length do
+    @for_range_opt(length)
+    def _(i):
+        # 3: [[sum]] <- 0
+        sum_u = sfix(0.0)
+        
+        # 4: for j = 0 to 11 do (12 iterations total)
+        for _ in range(12):
+            # 5: [[sum]] <- [[sum]] + πGR-RANDOM(0, 1)
+            sum_u = sum_u + sfix.get_random(0, 1)
+            
+        # 6: [[γ[i]]] <- [[sum]] - 6
+        gamma[i] = sum_u - 6.0
+        
+    return gamma
+
 def NormalSampler():
     # Irwin-Hall approximation of a Normal distribution
     sum_u = 0
@@ -151,23 +175,23 @@ top_k_indices = Array(k, cint)
 
 # Define the absolute ceiling for the F-score (Delta F)
 f_max_clip = sfix(50.0)
-
 @for_range(k)
 def _(step):
     max_val = MemValue(sfix(-10000.0))
     max_idx = MemValue(sint(0)) 
+    
+    # Pre-generate the noise vector for this step (Algorithm 6)
+    noise_vector = pi_GAUSS(num_genes)
 
     @for_range(num_genes)
     def _(j):
         raw_f = f_stats[j]
-        
-        # 1. STRICT CLIPPING: Enforce the Delta F boundary
         is_above = raw_f > f_max_clip
         clipped_f = is_above * f_max_clip + (1 - is_above) * raw_f
         
-        # 2. ADD NOISE: Perturb the strictly bounded score
-        noisy_score = clipped_f + sigma_f_stat * NormalSampler()
-        
+        # Add the pre-computed noise
+        noisy_score = clipped_f + sigma_f_stat * noise_vector[j]
+    
         # 3. SECURE ARGMAX: Find the highest noisy score
         is_greater = noisy_score > max_val.read()
         new_max_val = is_greater * noisy_score + (1 - is_greater) * max_val.read()
