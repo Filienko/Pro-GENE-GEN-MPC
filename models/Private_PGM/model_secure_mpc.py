@@ -141,26 +141,10 @@ class SecureMPCPrivatePGM:
     def train_from_party_files(self, party_data_files, config,
                                 bin_protocol='ppai_bin',
                                 marginal_protocol='ppai_msr_noisy_final',
-                                cliques=None, num_iters=10000):
+                                cliques=None, num_iters=10000, 
+                                deg_filtering=None): # <-- Added parameter
         """
         Train model from separate party data files (SECURE - no data leakage)
-
-        This method ensures:
-        1. Each party's data stays on their own system
-        2. Binning happens in MPC
-        3. Marginals computed in MPC
-        4. Only noisy DP-protected statistics are revealed
-
-        Args:
-            party_data_files: List of paths to CSV files, one per party
-            config: Domain configuration (dict of column names to sizes)
-            bin_protocol: MPC protocol for binning (default: ppai_bin_opt)
-            marginal_protocol: MPC protocol for marginals (default: ppai_msr_noisy_final)
-            cliques: List of clique tuples for 2-way marginals
-            num_iters: Number of inference iterations
-
-        Returns:
-            None (model stored in self.model)
         """
         print("\n" + "="*80)
         print("SECURE MPC TRAINING - NO DATA LEAKAGE")
@@ -176,35 +160,43 @@ class SecureMPCPrivatePGM:
             if not os.path.exists(filepath):
                 raise FileNotFoundError(f"Party {i} data file not found: {filepath}")
 
-        # Get metadata (counts are public, data is secret)
+        # Get metadata
         num_genes = len([col for col in config.keys() if col != self.target_variable])
         num_classes = config[self.target_variable]
+        
+        # Calculate total samples
+        total_samples = sum(sum(1 for _ in open(filepath, 'r')) - 1 for filepath in party_data_files)
 
-        print(f"Number of features: {num_genes}")
-        print(f"Number of classes: {num_classes}")
-        print(f"Number of parties: {len(party_data_files)}")
-
-        # Calculate total samples (public information)
-        total_samples = 0
-        for filepath in party_data_files:
-            with open(filepath, 'r') as f:
-                party_samples = sum(1 for _ in f) - 1  # Subtract header
-                total_samples += party_samples
-                print(f"  Party {len([None for _ in party_data_files if party_data_files.index(filepath) < party_data_files.index(filepath)])} samples: {party_samples}")
-
-        print(f"Total samples: {total_samples}")
-
-        # Calibrate noise for privacy
+        # ==========================================================
+        # PRIVACY BUDGET ALLOCATION (Dynamic 3-way or 2-way split)
+        # ==========================================================
+        eps_topk, delta_topk = 0.0, 0.0
+        
         if self.enable_privacy:
+            if deg_filtering is not None and deg_filtering > 0:
+                print("\n[Privacy Accountant] Dynamic 3-Way Budget Split Engaged:")
+                # 20% Top-K, 20% Binning, 60% Marginals
+                eps_topk = self.target_epsilon * 0.2
+                self.epsilon_binning = self.target_epsilon * 0.2
+                self.epsilon_marginals = self.target_epsilon * 0.6
+                
+                delta_topk = self.target_delta * 0.2
+                self.delta_binning = self.target_delta * 0.2
+                self.delta_marginals = self.target_delta * 0.6
+                
+                print(f"  Top-K DEG: ε={eps_topk:.3f}, δ={delta_topk}")
+                print(f"  Binning:   ε={self.epsilon_binning:.3f}, δ={self.delta_binning}")
+                print(f"  Marginals: ε={self.epsilon_marginals:.3f}, δ={self.delta_marginals}")
+            else:
+                # Standard 50/50 Split
+                self.epsilon_binning = self.target_epsilon * 0.5
+                self.epsilon_marginals = self.target_epsilon * 0.5
+                self.delta_binning = self.target_delta * 0.5
+                self.delta_marginals = self.target_delta * 0.5
+
             if self.target_delta > 0:
-                # Binning noise
-                sigma_bin = self.moments_calibration(
-                    1.0, 1.0, self.epsilon_binning, self.delta_binning
-                )
-                # Marginal noise
-                sigma_marginal = self.moments_calibration(
-                    1.0, 1.0, self.epsilon_marginals, self.delta_marginals
-                )
+                sigma_bin = self.moments_calibration(1.0, 1.0, self.epsilon_binning, self.delta_binning)
+                sigma_marginal = self.moments_calibration(1.0, 1.0, self.epsilon_marginals, self.delta_marginals)
             else:
                 sigma_bin = 1.0 / num_genes / 2.0
                 sigma_marginal = 1.0 / num_genes / 2.0
@@ -212,64 +204,60 @@ class SecureMPCPrivatePGM:
             sigma_bin = 0.0
             sigma_marginal = 0.0
 
-        print(f"Privacy noise (σ): {sigma_marginal}")
-
-        # INTEGRATED MPC WORKFLOW: Binning + Marginals (binned data stays secret!)
-        print("\nUsing integrated MPC protocol (ppai_bin_msr.mpc)")
-        print("SECURITY: Binned data will NEVER be revealed - stays secret throughout")
-
-        marginals_1way, marginals_2way, bin_means_array = self.mpc_computer.compute_marginals_with_binning(
+        # ==========================================================
+        # INTEGRATED MPC WORKFLOW
+        # ==========================================================
+        marginals_1way, marginals_2way, bin_means_array, selected_indices = self.mpc_computer.compute_marginals_with_binning(
             party_data_files=party_data_files,
             num_genes=num_genes,
             num_classes=num_classes,
             target_delta=self.target_delta,
-            sigma=sigma_marginal
+            sigma=sigma_marginal,
+            deg_filtering=deg_filtering, # Pass DEG k
+            epsilon_topk=eps_topk,       # Pass Top-K allocated epsilon
+            delta_topk=delta_topk        # Pass Top-K allocated delta
         )
+        all_feature_names = [k for k in config.keys() if k != self.target_variable]
+        
+        if deg_filtering is not None and deg_filtering > 0 and selected_indices:
+            selected_gene_names = [all_feature_names[i] for i in selected_indices]
+        else:
+            selected_gene_names = all_feature_names
+            
+        # Store the final correct columns on the model object so the orchestrator can read them
+        self.selected_columns = selected_gene_names + [self.target_variable]
 
-        # Note: Integrated workflow doesn't separately output bin means
-        # They are used internally for inverse binning within the MPC protocol
+        # 2. Map bin means correctly
         if bin_means_array is not None:
             self.noisy_bin_means = {}
-            domain_keys = list(config.keys())
-            for i in range(num_genes):
-                col_name = domain_keys[i]  # Map gene names back to their index
+            for i, col_name in enumerate(selected_gene_names):
                 self.noisy_bin_means[col_name] = bin_means_array[i]
-            print("✓ Successfully loaded DP-protected bin means for continuous data generation")
         else:
             self.noisy_bin_means = None
-            warnings.warn("Noisy bin means were not returned from MPC.")
-
-        print(f"✓ Marginals computed with DP protection")
-        print(f"  1-way marginals: {len(marginals_1way)} values (noisy)")
-        print(f"  2-way marginals: {len(marginals_2way)} values (noisy)")
 
         # STEP 3: Public Inference (on noisy public statistics)
         print("\n" + "-"*80)
         print("STEP 3: PUBLIC INFERENCE ON NOISY STATISTICS")
         print("-"*80)
-        print("All inputs are DP-protected - safe to process publicly")
-
-        print(f"\nDEBUG: marginals_1way shape: {marginals_1way.shape}")
-        print(f"DEBUG: marginals_2way shape: {marginals_2way.shape}")
-        print(f"DEBUG: config: {config}")
-        print(f"DEBUG: cliques: {cliques}")
+        
+        # 3. Build a filtered config matching ONLY the selected genes
+        filtered_config = {k: config[k] for k in selected_gene_names}
+        filtered_config[self.target_variable] = config[self.target_variable]
 
         measurements = self._convert_to_measurements(
             marginals_1way,
             marginals_2way,
-            config,
+            filtered_config,
             sigma_marginal,
             cliques
         )
 
-        domain = Domain(config.keys(), config.values())
+        domain = Domain(filtered_config.keys(), filtered_config.values())
         engine = FactoredInference(domain, log=True, iters=num_iters)
         self.model = engine.estimate(measurements, total=total_samples, engine="MD")
 
         print("✓ Model training completed")
-        print("="*80)
-        print("TRAINING COMPLETE - NO DATA LEAKAGE")
-        print("="*80)
+
 
     def _convert_to_measurements(self, marginals_1way, marginals_2way, config,
                                   sigma, cliques=None):

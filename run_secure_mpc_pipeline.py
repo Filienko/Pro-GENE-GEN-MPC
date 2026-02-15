@@ -93,7 +93,7 @@ def validate_party_files(party_files):
 def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
                              mpspdz_path=None, bin_protocol='ppai_bin',
                              marginal_protocol='ppai_msr_noisy_final',
-                             num_iters=10000):
+                             deg_filtering=None, num_iters=10000):
     """
     Run the secure MPC pipeline with no data leakage
 
@@ -168,7 +168,8 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
         config=config,
         bin_protocol=bin_protocol,
         marginal_protocol=marginal_protocol,
-        num_iters=num_iters
+        num_iters=num_iters,
+        deg_filtering=deg_filtering
     )
 
     # Generate synthetic data
@@ -183,7 +184,13 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
     )
 
     synthetic_continuous = model.generate_continuous(num_rows=total_samples)
-    synthetic_df = pd.DataFrame(synthetic_continuous, columns=column_names)
+    
+    # NEW: Fetch the dynamically selected column names from the model 
+    # (falls back to original column_names if no filtering happened)
+    final_columns = getattr(model, 'selected_columns', column_names)
+
+    # Create the DataFrame using the correctly sized list
+    synthetic_df = pd.DataFrame(synthetic_continuous, columns=final_columns)
 
     # Save output
     print(f"\nSaving synthetic data to: {output_path}")
@@ -245,6 +252,12 @@ SECURITY GUARANTEE:
         help='Path to save synthetic data (default: synthetic_data_secure.csv)'
     )
     parser.add_argument(
+        '--deg_filtering',
+        type=int,
+        default=None,
+        help='Number of Top-K genes to securely select and process (default: None, processes all genes)'
+    )
+    parser.add_argument(
         '--mpspdz_path',
         type=str,
         required=True,
@@ -292,7 +305,8 @@ SECURITY GUARANTEE:
         mpspdz_path=args.mpspdz_path,
         bin_protocol=args.bin_protocol,
         marginal_protocol=args.marginal_protocol,
-        num_iters=args.num_iters
+        num_iters=args.num_iters,
+        deg_filtering=args.deg_filtering
     )
 
     print("\n✓ SUCCESS - Secure synthetic data generated")

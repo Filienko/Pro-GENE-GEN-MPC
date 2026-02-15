@@ -346,7 +346,7 @@ class MPCMarginalComputer:
         # 3. ADJUST OUTPUT PARSER (Extract k genes if filtered, else all genes)
         output_genes_count = deg_filtering if (deg_filtering is not None and deg_filtering > 0) else num_genes
         
-        measurements_1way, measurements_2way, bin_means_array, selected_indices = self._parse_marginals_output(
+        measurements_1way, measurements_2way, bin_means_array = self._parse_marginals_output(
             result.stdout, output_genes_count, num_classes
         )
 
@@ -354,8 +354,7 @@ class MPCMarginalComputer:
         print("✓ Complete! Only noisy marginals and means revealed - binned data stayed secret")
         print("="*80 + "\n")
 
-        return measurements_1way, measurements_2way, bin_means_array, selected_indices
-
+        return measurements_1way, measurements_2way, bin_means_array
     def _parse_marginals_output(self, stdout, num_genes, num_classes):
             lines = stdout.split('\n')
             in_marginals_section = False
@@ -382,7 +381,7 @@ class MPCMarginalComputer:
                     except Exception:
                         pass
                     continue
-                
+
                 if line == '=== BIN_MEANS_START ===': in_means_section = True; continue
                 elif line == '=== BIN_MEANS_END ===': in_means_section = False; continue
                 elif in_means_section and line:
@@ -429,7 +428,7 @@ class MPCMarginalComputer:
                 bin_means_array = np.array(bin_means_list).reshape(num_genes, 4)
                 print(f"  DEBUG: Successfully parsed {len(bin_means_list)} bin means.")
 
-            return measurements_1way, measurements_2way, bin_means_array, selected_indices
+            return measurements_1way, measurements_2way, bin_means_array
 
     def compute_marginals_from_party_files(self, party_data_files, num_genes,
                                            num_classes, target_delta, sigma,
