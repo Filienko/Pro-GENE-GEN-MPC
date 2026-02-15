@@ -11,24 +11,18 @@ import tempfile
 import math
 from pathlib import Path
 
-
-def calculate_f_stat_noise(epsilon_topk, delta, k, data_range=5.0, min_variance=1.0):
-    """
-    Calculates the Gaussian noise scale (sigma) for Top-K F-statistic selection 
-    using the Exponential Mechanism.
-    """
+def calculate_f_stat_noise(epsilon_topk, delta, k, f_max_clip=50.0):
     if k <= 0: return 0
     
-    # Delta F (Sensitivity of F-statistic)
-    sensitivity_f = (data_range ** 2) / min_variance
+    sensitivity_f = f_max_clip
     
-    # Budget per step
+    # Strictly split both epsilon AND delta across the k sequential selections
     eps_per_step = epsilon_topk / k
+    delta_per_step = delta / k
     
-    # Gaussian noise scale formula
-    sigma = (sensitivity_f * math.sqrt(2 * math.log(1.25 / delta))) / eps_per_step
+    # Gaussian noise scale formula using the strict step-budgets
+    sigma = (sensitivity_f * math.sqrt(2 * math.log(1.25 / delta_per_step))) / eps_per_step
     return int(sigma * 10000)
-
 
 class MPCProtocolExecutor:
     """

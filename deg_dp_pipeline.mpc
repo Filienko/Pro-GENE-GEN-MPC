@@ -141,7 +141,6 @@ def _(j):
 
 f_stats.assign_vector(msb_arr.get_vector() / msw_arr.get_vector())
 stop_timer(100)
-
 # =========================================================
 # PHASE 2: DP TOP-K SELECTION (REPORT NOISY MAX)
 # =========================================================
@@ -150,15 +149,26 @@ print_ln(">> Phase 2: Secure Top-K Extraction (Exponential Mechanism)...")
 
 top_k_indices = Array(k, cint)
 
+# Define the absolute ceiling for the F-score (Delta F)
+f_max_clip = sfix(50.0)
+
 @for_range(k)
 def _(step):
-    max_val = MemValue(sfix(-10000.0)) 
-    max_idx = MemValue(sint(0))
+    max_val = MemValue(sfix(-10000.0))
+    max_idx = MemValue(sint(0)) 
 
     @for_range(num_genes)
     def _(j):
-        noisy_score = f_stats[j] + sigma_f_stat * NormalSampler()
+        raw_f = f_stats[j]
         
+        # 1. STRICT CLIPPING: Enforce the Delta F boundary
+        is_above = raw_f > f_max_clip
+        clipped_f = is_above * f_max_clip + (1 - is_above) * raw_f
+        
+        # 2. ADD NOISE: Perturb the strictly bounded score
+        noisy_score = clipped_f + sigma_f_stat * NormalSampler()
+        
+        # 3. SECURE ARGMAX: Find the highest noisy score
         is_greater = noisy_score > max_val.read()
         new_max_val = is_greater * noisy_score + (1 - is_greater) * max_val.read()
         new_max_idx = is_greater * sint(j) + (1 - is_greater) * max_idx.read()

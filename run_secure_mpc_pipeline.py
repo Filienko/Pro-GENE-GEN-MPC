@@ -309,9 +309,8 @@ SECURITY GUARANTEE:
         deg_filtering=args.deg_filtering
     )
 
-    print("\n✓ SUCCESS - Secure synthetic data generated")
-    print(f"✓ Privacy guarantee: (ε={args.epsilon}, δ={args.delta})-DP")
-    print(f"✓ MPC security: Semi-honest against < {len(args.party_files)} parties")
+    print("\n Secure synthetic data generated")
+    print(f" Privacy guarantee: (ε={args.epsilon}, δ={args.delta})-DP")
     synthetic_df.to_csv(args.output_path, index=False)
     print(f"✓ Output saved to: {args.output_path}")
 
