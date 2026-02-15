@@ -11,17 +11,19 @@ import tempfile
 import math
 from pathlib import Path
 
-def calculate_f_stat_noise(epsilon_topk, delta, k, f_max_clip=50.0):
+def calculate_f_stat_noise(epsilon_topk, delta_topk, k, num_genes, f_max_clip=50.0):
     if k <= 0: return 0
     
-    sensitivity_f = f_max_clip
+    # 1. L2 Sensitivity for the Gaussian Mechanism across a vector of size 'num_genes'
+    sensitivity_l2 = f_max_clip * math.sqrt(num_genes)
     
-    # Strictly split both epsilon AND delta across the k sequential selections
+    # 2. Strict splitting of epsilon and delta for sequential composition
     eps_per_step = epsilon_topk / k
-    delta_per_step = delta / k
+    delta_per_step = delta_topk / k 
     
-    # Gaussian noise scale formula using the strict step-budgets
-    sigma = (sensitivity_f * math.sqrt(2 * math.log(1.25 / delta_per_step))) / eps_per_step
+    # 3. Gaussian noise scale formula
+    sigma = (sensitivity_l2 * math.sqrt(2 * math.log(1.25 / delta_per_step))) / eps_per_step
+    
     return int(sigma * 10000)
 
 class MPCProtocolExecutor:
@@ -286,7 +288,7 @@ class MPCMarginalComputer:
             del_k = delta_topk if delta_topk else target_delta
             
             mpc_sigma_f_stat = calculate_f_stat_noise(
-                epsilon_topk=eps_k, delta=del_k, k=deg_filtering
+                epsilon_topk=eps_k, delta_topk=del_k, k=deg_filtering, num_genes=num_genes
             )
             print(f"  Allocated DP Noise - Marginals: {sigma:.4f}, F-Stats: {mpc_sigma_f_stat/10000:.4f}")
             
