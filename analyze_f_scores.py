@@ -10,6 +10,8 @@ def analyze_f_scores(input_file, label_col):
 
     # 1. Load Data
     df = pd.read_csv(input_file)
+    df = df.sample(frac=0.25, random_state=42).reset_index(drop=True)
+
     df_numeric = df.select_dtypes(include="number")
     print(f"min:{df_numeric.min().min()}, max:{df_numeric.max().max()}")
     print(f"75th %:   {df_numeric.quantile(0.75).max():.4f}")

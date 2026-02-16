@@ -131,7 +131,7 @@ msb_arr = sfix.Array(num_genes)
 msw_arr = sfix.Array(num_genes)
 
 # DP BOUND: The theoretical minimum variance. Aligns with the Delta calculation.
-min_variance = sfix(1.0) 
+epsilon = sfix(0.001) 
 
 @for_range_opt(num_genes)
 def _(j):
@@ -156,9 +156,9 @@ def _(j):
 
     raw_ssw = sst.read() - ssb.read()
     
-    # Enforce minimum variance constraint for Differential Privacy bounds
-    is_below_min = raw_ssw < min_variance
-    safe_ssw = is_below_min * min_variance + (1 - is_below_min) * raw_ssw
+    # Prevent division by zero
+    is_below_eps = raw_ssw < epsilon
+    safe_ssw = is_below_eps * epsilon + (1 - is_below_eps) * raw_ssw
 
     msb_arr[j] = ssb.read() / df_between
     msw_arr[j] = safe_ssw / df_within

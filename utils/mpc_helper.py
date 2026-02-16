@@ -14,7 +14,7 @@ from pathlib import Path
 def calculate_f_stat_noise(epsilon_topk, delta_topk, k, num_genes, f_max_clip=50.0):
     if k <= 0: return 0
     
-    # 1. L2 Sensitivity for the Gaussian Mechanism across a vector of size 'num_genes'
+    # 1. L2 Sensitivity for the returned F-statistic value
     sensitivity_l2 = f_max_clip * math.sqrt(num_genes)
     
     # 2. Strict splitting of epsilon and delta for sequential composition
@@ -23,7 +23,7 @@ def calculate_f_stat_noise(epsilon_topk, delta_topk, k, num_genes, f_max_clip=50
     
     # 3. Gaussian noise scale formula
     sigma = (sensitivity_l2 * math.sqrt(2 * math.log(1.25 / delta_per_step))) / eps_per_step
-    
+    print(f"    [Noise Calc] Sensitivity: {sensitivity_l2:.4f}, Eps/Step: {eps_per_step:.4f}, Delta/Step: {delta_per_step:.4e}, Sigma: {sigma:.4f}")
     return int(sigma * 10000)
 
 class MPCProtocolExecutor:
