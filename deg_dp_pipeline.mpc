@@ -175,7 +175,7 @@ print_ln(">> Phase 2: Secure Top-K Extraction (Exponential Mechanism)...")
 top_k_indices = Array(k, cint)
 
 # Define the absolute ceiling for the F-score (Delta F)
-f_max_clip = sfix(50.0)
+f_max_clip = sfix(10.0)
 @for_range(k)
 def _(step):
     max_val = MemValue(sfix(-10000.0))

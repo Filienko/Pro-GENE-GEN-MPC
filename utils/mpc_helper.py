@@ -11,7 +11,7 @@ import tempfile
 import math
 from pathlib import Path
 
-def calculate_f_stat_noise(epsilon_topk, delta_topk, k, num_genes, f_max_clip=50.0):
+def calculate_f_stat_noise(epsilon_topk, delta_topk, k, num_genes, f_max_clip=10.0):
     if k <= 0: return 0
     
     # 1. L2 Sensitivity for the returned F-statistic value
