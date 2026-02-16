@@ -165,6 +165,7 @@ def _(j):
 
 f_stats.assign_vector(msb_arr.get_vector() / msw_arr.get_vector())
 stop_timer(100)
+
 # =========================================================
 # PHASE 2: DP TOP-K SELECTION (REPORT NOISY MAX)
 # =========================================================

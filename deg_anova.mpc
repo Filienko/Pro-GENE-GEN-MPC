@@ -68,7 +68,6 @@ class_means = sfix.Matrix(n_classes, m_genes)
 
 @for_range_opt(n_classes)
 def _(c):
-    # FIX: Securely handle zero-count classes without epsilon explosion
     is_empty = (class_counts[c] == 0)
     safe_count = class_counts[c] + is_empty # If 0, becomes 1 to prevent div-by-zero
     inv_count = (1.0 / safe_count) * (1 - is_empty) # If 0, mean becomes 0
@@ -112,13 +111,12 @@ def _(j):
         diff = class_means[c][j] - mu_total
         ssb.write(ssb.read() + class_counts[c] * diff * diff)
 
-    # FIX: Prevent catastrophic cancellation making SSW negative
     raw_ssw = sst.read() - ssb.read()
     is_positive = raw_ssw > 0
     safe_ssw = raw_ssw * is_positive
 
     msb_arr[j] = ssb.read() / df_between
-    msw_arr[j] = safe_ssw / df_within + 0.000001 # Small epsilon to prevent F-stat div-by-zero
+    msw_arr[j] = safe_ssw / df_within + 0.000001
 
 # Vectorized Secret Division
 f_stats.assign_vector(msb_arr.get_vector() / msw_arr.get_vector())
