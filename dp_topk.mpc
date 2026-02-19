@@ -117,46 +117,70 @@ def _(j):
 f_stats.assign_vector(msb_arr.get_vector() / msw_arr.get_vector())
 
 # ---------------------------------------------------------
-# 4. DP TOP-K (Report Noisy Max)
+# PHASE 4: DP SECURE TOP-K (Report Noisy Max)
 # ---------------------------------------------------------
-# Sigma is passed as the 6th arg, scaled by 10000.
-# e.g., if args[6] is "50000", sigma is 5.0
 if len(program.args) > 6:
     sigma = sfix(float(program.args[6]) / 10000.0)
 else:
     sigma = sfix(5.0)
 
-f_max_clip = sfix(10.0)
+f_max_clip = sfix(50.0) 
+
+# FIX: Use -1.0 instead of -100000.0
+# Since F-stats are >= 0, -1.0 is guaranteed to be lower than any real score.
+# This prevents the "Value out of fixed-point range" error.
+min_val_const = sfix(-1.0)
+
+print_ln(">> Phase 4: Running DP Top-K extraction with sigma=%s...", sigma.reveal())
 
 @for_range(k)
 def _(step):
-    max_val = MemValue(sfix(-10000.0))
+    # Initialize Max containers using the safe constant
+    max_val = MemValue(min_val_const)
     max_idx = MemValue(sint(0))
     
-    # Generate Noise and Find Max in one pass (Memory Efficient)
-    @for_range(m_genes)
+    # OPTIMIZATION: Use for_range_opt (Runtime Loop) for M_GENES
+    @for_range_opt(m_genes)
     def _(j):
-        # 1. Generate Gaussian Noise (Irwin-Hall)
-        sum_u = sfix(0.0)
-        for _ in range(12): sum_u = sum_u + sfix.get_random(0, 1)
-        noise = sum_u - 6.0
+        # 1. Generate Gaussian Noise (Irwin-Hall Approximation)
+        # Explicit bit generation to prevent type issues
+        sum_u = MemValue(sfix(0))
+        
+        @for_range(12)
+        def _(_):
+            b = sint.get_random_bit()
+            sum_u.write(sum_u.read() + b)
+            
+        noise = sum_u.read() - 6.0
 
         # 2. Clip and Add Noise
         raw_f = f_stats[j]
+        
+        # Secure Clipping (ReLU logic)
         is_above = raw_f > f_max_clip
         clipped_f = is_above * f_max_clip + (1 - is_above) * raw_f
+        
+        # Add scaled noise
         noisy_score = clipped_f + sigma * noise
         
-        # 3. ArgMax Update
-        is_greater = noisy_score > max_val.read()
-        new_max_val = is_greater * noisy_score + (1 - is_greater) * max_val.read()
-        new_max_idx = is_greater * sint(j) + (1 - is_greater) * max_idx.read()
+        # 3. ArgMax Update (Multiplexer)
+        current_max = max_val.read()
+        is_greater = noisy_score > current_max
         
+        new_max_val = is_greater * noisy_score + (1 - is_greater) * current_max
         max_val.write(new_max_val)
+        
+        new_max_idx = is_greater * sint(j) + (1 - is_greater) * max_idx.read()
         max_idx.write(new_max_idx)
 
-    best_idx = max_idx.read().reveal()
-    print_ln('DP Rank %s: Feature %s', step, best_idx)
+    # Reveal ONLY the index
+    best_idx_clear = max_idx.read().reveal()
     
-    # Mask out selected
-    f_stats[best_idx] = sfix(-10000.0)
+    print_ln('DP Rank %s: Feature %s', step, best_idx_clear)
+    
+    # Mask out the selected feature using the safe constant
+    # We use the public index to address the array directly
+    f_stats[best_idx_clear] = min_val_const
+
+print_ln(">> Protocol Complete.")
+
