@@ -19,7 +19,7 @@ class SecureDEGOrchestrator:
         self.protocol_name = protocol_name
         self.binary_name = "./replicated-ring-party.x"
         self.compile_script = "./compile.py"
-        self.F_STAT_SENSITIVITY = 50.0
+        self.F_STAT_SENSITIVITY = 15.0
 
     def _calculate_sigma(self, epsilon, delta):
         if epsilon <= 0: return 1000.0
@@ -247,6 +247,12 @@ class KFoldBenchmarkRunner:
     def plot_results(self):
         output_dir = "benchmark_plots"
         os.makedirs(output_dir, exist_ok=True)
+        if self.results:
+            pd.DataFrame(self.results).to_csv(f"{output_dir}/exp1_results.csv", index=False)
+
+        if self.epsilon_results:
+            pd.DataFrame(self.epsilon_results).to_csv(f"{output_dir}/exp2_epsilon_results.csv", index=False)
+
 
         # --- Experiment 1 plots ---
         if self.results:
@@ -388,8 +394,8 @@ if __name__ == "__main__":
     # Experiment 1: Vary total gene count (M) and number of DEGs (K)
     # ------------------------------------------------------------------
     if not args.skip_exp1:
-        SIZES  = [100, 500, 1000]
-        K_VALS = [10, 50]
+        SIZES  = [100, 500, 1000, 10000]
+        K_VALS = [10, 50, 100]
         runner.run_benchmark(feature_sizes=SIZES, k_vals=K_VALS, epsilon=10.0)
 
     # ------------------------------------------------------------------
@@ -400,8 +406,8 @@ if __name__ == "__main__":
         runner.run_epsilon_benchmark(
             epsilon_vals=EPSILON_VALS,
             fixed_m=1000,
-            fixed_k=50,
-            delta=1e-5
+            fixed_k=100,
+            delta=1e-3
         )
 
     runner.plot_results()

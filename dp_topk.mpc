@@ -124,7 +124,7 @@ if len(program.args) > 6:
 else:
     sigma = sfix(5.0)
 
-f_max_clip = sfix(50.0) 
+f_max_clip = sfix(15.0) 
 
 # FIX: Use -1.0 instead of -100000.0
 # Since F-stats are >= 0, -1.0 is guaranteed to be lower than any real score.
