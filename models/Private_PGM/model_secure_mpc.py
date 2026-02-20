@@ -215,7 +215,8 @@ class SecureMPCPrivatePGM:
             sigma=sigma_marginal,
             deg_filtering=deg_filtering, # Pass DEG k
             epsilon_topk=eps_topk,       # Pass Top-K allocated epsilon
-            delta_topk=delta_topk        # Pass Top-K allocated delta
+            delta_topk=delta_topk,        # Pass Top-K allocated delta
+            protocol_name=marginal_protocol
         )
         all_feature_names = [k for k in config.keys() if k != self.target_variable]
         

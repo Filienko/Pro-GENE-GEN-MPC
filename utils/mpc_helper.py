@@ -13,6 +13,9 @@ import time
 import re
 from pathlib import Path
 
+import pandas as pd
+import numpy as np
+
 MPC_METRICS = {
     'compile_time': 0.0, 
     'execute_time': 0.0,
@@ -243,33 +246,33 @@ class MPCMarginalComputer:
         self.binner = MPCBinningComputer(mpspdz_path, protocol)
     def compute_marginals_with_binning(self, party_data_files, num_genes,
                                        num_classes, target_delta, sigma, 
-                                       deg_filtering=None, epsilon_topk=None, delta_topk=None):
+                                       deg_filtering=None, epsilon_topk=None, delta_topk=None,
+                                       protocol_name='ppai_bin_msr'): # <-- Added protocol_name
         """
-        Complete workflow: Option to DEG filter, bin data, then compute noisy marginals 
-        (SECURE - no data leakage)
+        Complete workflow: Pre-computes histograms or handles raw binning.
         """
         print("\n" + "="*80)
         
-        # 1. BRANCH LOGIC: Standard vs DEG Filtering
-        if deg_filtering is not None and deg_filtering > 0:
+        # 1. BRANCH LOGIC: Histogram vs Standard
+        if protocol_name == 'histogram_marginals':
+            print("INTEGRATED MPC WORKFLOW: Pre-computed Histograms (O(1) respect to N)")
+            mpc_sigma_marginal = int(sigma * 10000)
+            mpc_sigma_f_stat = 0 # Not used for this branch
+            
+        elif deg_filtering is not None and deg_filtering > 0:
             print(f"INTEGRATED MPC WORKFLOW: DP-DEG Top-{deg_filtering} Filter → Binning → MSR")
             protocol_name = 'deg_dp_pipeline'
-            
-            # Calculate integer noise scales for MP-SPDZ
             mpc_sigma_marginal = int(sigma * 10000)
-            
-            # Use the tightly allocated accountant budget dynamically passed from model_secure_mpc.py
             eps_k = epsilon_topk if epsilon_topk else 1.0
             del_k = delta_topk if delta_topk else target_delta
-            
             mpc_sigma_f_stat = calculate_f_stat_noise(
                 epsilon_topk=eps_k, delta_topk=del_k, k=deg_filtering, num_genes=num_genes
             )
-            print(f"  Allocated DP Noise - Marginals: {sigma:.4f}, F-Stats: {mpc_sigma_f_stat/10000:.4f}")
-            
         else:
             print("INTEGRATED MPC WORKFLOW: Binning → MSR (Standard, All Genes)")
             protocol_name = 'ppai_bin_msr'
+            mpc_sigma_marginal = int(sigma * 10000)
+            mpc_sigma_f_stat = 0
             
         print("="*80)
         
@@ -279,8 +282,10 @@ class MPCMarginalComputer:
 
         # Calculate party sizes
         party_sizes = []
+        import pandas as pd
+        import numpy as np # Ensure numpy is available
+        
         for party_file in party_data_files:
-            import pandas as pd
             party_sizes.append(len(pd.read_csv(party_file)))
 
         # Prepare MPC input files
@@ -289,22 +294,50 @@ class MPCMarginalComputer:
 
         print(f"Preparing MPC input files in {player_data_dir}...")
         for party_idx, party_file in enumerate(party_data_files):
-            import pandas as pd
             df = pd.read_csv(party_file)
-            df_numeric = df[df.select_dtypes(include=['number']).columns.tolist()]
-            
             input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
-            with open(input_file, 'w') as f:
-                for row in df_numeric.values:
-                    f.write(' '.join([str(val) for val in row]) + '\n')
+            
+            # --- NEW LOCAL HISTOGRAM LOGIC ---
+            if protocol_name == 'histogram_marginals':
+                print(f"  [Party {party_idx}] Generating local 1D histograms...")
+                # Extract labels and purely numeric features
+                labels = df['label'].values if 'label' in df.columns else df.iloc[:, -1].values
+                df_numeric = df.drop(columns=['label']) if 'label' in df.columns else df.iloc[:, :-1]
+                df_numeric = df_numeric.select_dtypes(include=['number'])
+
+                B = 1000
+                g_min, g_max = 0.0, 15.0
+                bins = np.linspace(g_min, g_max, B + 1)
+                
+                # Pre-allocate 1D array
+                flat_hist = np.zeros(num_genes * B * num_classes, dtype=int)
+                
+                for g in range(num_genes):
+                    gene_col = df_numeric.iloc[:, g].values
+                    for c in range(num_classes):
+                        class_mask = (labels == c)
+                        counts, _ = np.histogram(gene_col[class_mask], bins=bins)
+                        
+                        # Highly optimized vectorized assignment to matching MPC indices
+                        start_idx = g * (B * num_classes) + c
+                        end_idx = start_idx + (B * num_classes)
+                        flat_hist[start_idx:end_idx:num_classes] = counts
+
+                # Fast string write
+                with open(input_file, 'w') as f:
+                    f.write(' '.join(map(str, flat_hist)) + '\n')
+                print(f"  [Party {party_idx}] Successfully wrote {len(flat_hist)} integers.")
+            else:
+                df_numeric = df[df.select_dtypes(include=['number']).columns.tolist()]
+                with open(input_file, 'w') as f:
+                    for row in df_numeric.values:
+                        f.write(' '.join([str(val) for val in row]) + '\n')
 
         # 2. CONSTRUCT ARGUMENTS DYNAMICALLY
-        if deg_filtering is not None and deg_filtering > 0:
-            # Args match deg_dp_pipeline.mpc: [N0, N1, num_genes, num_classes, TopK, sigma_marg, sigma_fstat]
+        if protocol_name == 'deg_dp_pipeline':
             args = party_sizes + [num_genes, num_classes, deg_filtering, mpc_sigma_marginal, mpc_sigma_f_stat]
         else:
-            # Args match standard ppai_bin_msr.mpc: [N0, N1, num_genes, num_classes, sigma_marg]
-            args = party_sizes + [num_genes, num_classes, int(sigma * 10000)]
+            args = party_sizes + [num_genes, num_classes, mpc_sigma_marginal]
 
         print(f"\nCompiling integrated MPC protocol: {protocol_name}...")
         self.executor.compile_protocol(protocol_name, args=args)
