@@ -9,7 +9,8 @@ num_patients_0 = int(program.args[1]) #951
 num_patients_1 = int(program.args[2]) #950
 num_genes = int(program.args[3]) #958
 num_classes = int(program.args[4]) #5
-epsilon = 5 #int(program.args[5])
+sigma_int = int(program.args[5])
+target_delta = 1e-5
 num_data_custodians = 2
 qtls = [0.25, 0.5, 0.75]
 
@@ -158,8 +159,6 @@ stop_timer(300)
 start_timer(400)
 print_ln('Adding DP noise...')
 
-target_delta = 1e-5
-sigma_int = int(program.args[5])
 sigma = sfix(sigma_int) / sfix(10000.0)
 
 def compute_laplace(sigma):

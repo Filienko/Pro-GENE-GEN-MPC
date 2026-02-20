@@ -19,12 +19,14 @@ class SecureDEGOrchestrator:
         self.protocol_name = protocol_name
         self.binary_name = "./replicated-ring-party.x"
         self.compile_script = "./compile.py"
-        self.F_STAT_SENSITIVITY = 15.0
+        self.F_STAT_SENSITIVITY = 50.0
 
     def _calculate_sigma(self, epsilon, delta):
         if epsilon <= 0: return 1000.0
         val = math.sqrt(2 * math.log(1.25 / delta))
-        return (self.F_STAT_SENSITIVITY * val) / epsilon
+        sigma = (self.F_STAT_SENSITIVITY * val) / epsilon
+        print(f"sigma: {sigma} epsilon {epsilon}")
+        return sigma
 
     def _prepare_inputs(self, df0, df1, n_classes):
         data_dir = os.path.join(self.mpspdz_root, "Player-Data")

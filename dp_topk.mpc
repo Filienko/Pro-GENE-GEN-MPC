@@ -117,53 +117,48 @@ def _(j):
 f_stats.assign_vector(msb_arr.get_vector() / msw_arr.get_vector())
 
 # ---------------------------------------------------------
-# PHASE 4: DP SECURE TOP-K (Report Noisy Max)
+# PHASE 4: DP SECURE TOP-K (Simplified & Fixed)
 # ---------------------------------------------------------
 if len(program.args) > 6:
     sigma = sfix(float(program.args[6]) / 10000.0)
 else:
     sigma = sfix(5.0)
 
-f_max_clip = sfix(15.0) 
-
-# FIX: Use -1.0 instead of -100000.0
-# Since F-stats are >= 0, -1.0 is guaranteed to be lower than any real score.
-# This prevents the "Value out of fixed-point range" error.
+# 1. Match the sensitivity exactly to the Python script
+f_max_clip = sfix(50.0) 
 min_val_const = sfix(-1.0)
 
-print_ln(">> Phase 4: Running DP Top-K extraction with sigma=%s...", sigma.reveal())
+print_ln(">> Phase 4: DP Top-K extraction (Sigma=%s, Clip=%s)", sigma.reveal(), f_max_clip.reveal())
 
 @for_range(k)
 def _(step):
-    # Initialize Max containers using the safe constant
     max_val = MemValue(min_val_const)
     max_idx = MemValue(sint(0))
     
-    # OPTIMIZATION: Use for_range_opt (Runtime Loop) for M_GENES
     @for_range_opt(m_genes)
     def _(j):
-        # 1. Generate Gaussian Noise (Irwin-Hall Approximation)
-        # Explicit bit generation to prevent type issues
+        # 2. Generate PROPER Continuous Uniform Noise [0, 1)
+        # We generate a random 16-bit integer (0 to 65535) and divide by 65536
         sum_u = MemValue(sfix(0))
         
         @for_range(12)
         def _(_):
-            b = sint.get_random_bit()
-            sum_u.write(sum_u.read() + b)
+            r_int = sint.get_random_int(16) 
+            u_float = sfix(r_int) * (1.0 / 65536.0) 
+            sum_u.write(sum_u.read() + u_float)
             
+        # Irwin-Hall Approximation for Standard Normal N(0,1)
         noise = sum_u.read() - 6.0
 
-        # 2. Clip and Add Noise
+        # 3. Simple Clipping 
         raw_f = f_stats[j]
-        
-        # Secure Clipping (ReLU logic)
         is_above = raw_f > f_max_clip
         clipped_f = is_above * f_max_clip + (1 - is_above) * raw_f
         
-        # Add scaled noise
+        # 4. Add Calibrated Noise
         noisy_score = clipped_f + sigma * noise
         
-        # 3. ArgMax Update (Multiplexer)
+        # 5. ArgMax Update
         current_max = max_val.read()
         is_greater = noisy_score > current_max
         
@@ -173,14 +168,9 @@ def _(step):
         new_max_idx = is_greater * sint(j) + (1 - is_greater) * max_idx.read()
         max_idx.write(new_max_idx)
 
-    # Reveal ONLY the index
     best_idx_clear = max_idx.read().reveal()
-    
     print_ln('DP Rank %s: Feature %s', step, best_idx_clear)
     
-    # Mask out the selected feature using the safe constant
-    # We use the public index to address the array directly
     f_stats[best_idx_clear] = min_val_const
 
 print_ln(">> Protocol Complete.")
-

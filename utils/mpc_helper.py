@@ -9,7 +9,18 @@ import subprocess
 import numpy as np
 import tempfile
 import math
+import time
+import re
 from pathlib import Path
+
+MPC_METRICS = {
+    'compile_time': 0.0, 
+    'execute_time': 0.0,
+    'integer_bits': 0,
+    'integer_opens': 0,
+    'integer_triples': 0,
+    'vm_rounds': 0
+}
 
 def calculate_f_stat_noise(epsilon_topk, delta_topk, k, num_genes, f_max_clip=10.0):
     if k <= 0: return 0
@@ -46,82 +57,46 @@ class MPCProtocolExecutor:
         self.working_dir = working_dir or os.getcwd()
 
     def compile_protocol(self, mpc_file, args=None):
-        """
-        Compile .mpc protocol file using MP-SPDZ compiler
-
-        Args:
-            mpc_file: Protocol name (without .mpc extension) or path to .mpc file
-            args: Optional list of compile-time arguments
-
-        Returns:
-            bool: True if compilation successful
-        """
-        # Extract protocol name (remove .mpc if present)
         protocol_name = mpc_file.replace('.mpc', '')
-
-        compile_script = os.path.join(self.mpspdz_path, 'compile.py')
-
-        if not os.path.exists(compile_script):
-            raise FileNotFoundError(f"MP-SPDZ compile.py not found at {compile_script}")
-
-        # Build compilation command matching the user's pattern:
-        # cd PATH_MPC && ./compile.py -R 64 protocol_name arg1 arg2 ...
         compile_cmd = f"cd {self.mpspdz_path} && ./compile.py -R 64 {protocol_name}"
-
-        # Add compile-time arguments if provided
         if args:
             compile_cmd += " " + " ".join([str(arg) for arg in args])
 
         print(f"Compiling: {compile_cmd}")
 
-        # Execute compilation
-        result = os.system(compile_cmd)
+        start_time = time.time()
+        # Changed from os.system to subprocess.run to capture the text output
+        result = subprocess.run(compile_cmd, shell=True, capture_output=True, text=True)
+        MPC_METRICS['compile_time'] += (time.time() - start_time)
 
-        if result == 0:
+        if result.returncode == 0:
+            print(result.stdout) # Print it so you can still see it in the console
+            
+            # Parse the text to extract the metrics
+            bits_match = re.search(r'(\d+)\s+integer bits', result.stdout)
+            opens_match = re.search(r'(\d+)\s+integer opens', result.stdout)
+            triples_match = re.search(r'(\d+)\s+integer triples', result.stdout)
+            vm_match = re.search(r'(\d+)\s+virtual machine rounds', result.stdout)
+            
+            if bits_match: MPC_METRICS['integer_bits'] += int(bits_match.group(1))
+            if opens_match: MPC_METRICS['integer_opens'] += int(opens_match.group(1))
+            if triples_match: MPC_METRICS['integer_triples'] += int(triples_match.group(1))
+            if vm_match: MPC_METRICS['vm_rounds'] += int(vm_match.group(1))
+
             print(f"Compilation successful: {protocol_name}")
             return True
         else:
-            raise RuntimeError(f"MPC compilation failed for {protocol_name} (exit code {result})")
+            raise RuntimeError(f"MPC compilation failed for {protocol_name}\nSTDERR:\n{result.stderr}")
 
     def execute_protocol(self, protocol_name, num_parties=2, args=None):
-        """
-        Execute compiled MPC protocol
-
-        Args:
-            protocol_name: Name of compiled protocol (without .mpc extension)
-            num_parties: Number of MPC parties
-            args: List of compile-time arguments used during compilation.
-                  If provided, they're appended to protocol_name with dashes.
-
-        Returns:
-            subprocess.CompletedProcess: Result of execution
-        """
-        protocol_script = os.path.join(
-            self.mpspdz_path,
-            'Scripts',
-            f'{self.protocol}.sh'
-        )
-
-        if not os.path.exists(protocol_script):
-            raise FileNotFoundError(f"Protocol script not found at {protocol_script}")
-
-        # When compiled with args, MP-SPDZ creates files with args appended to name
-        # e.g., ppai_bin_msr-489-490-10-14.sch
-        # So we need to execute with: ring.sh ppai_bin_msr-489-490-10-14
-        full_protocol_name = protocol_name
-        if args:
-            full_protocol_name = protocol_name + "-" + "-".join([str(arg) for arg in args])
-
+        protocol_script = os.path.join(self.mpspdz_path, 'Scripts', f'{self.protocol}.sh')
+        full_protocol_name = protocol_name + "-" + "-".join([str(arg) for arg in args]) if args else protocol_name
         cmd = [protocol_script, full_protocol_name]
 
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=self.mpspdz_path,
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            start_time = time.time()
+            result = subprocess.run(cmd, cwd=self.mpspdz_path, capture_output=True, text=True, check=True)
+            MPC_METRICS['execute_time'] += (time.time() - start_time)
             return result
         except subprocess.CalledProcessError as e:
             print(f"\n{'='*80}")

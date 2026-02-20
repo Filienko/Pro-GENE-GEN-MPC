@@ -19,7 +19,7 @@ class SecureDEGOrchestrator:
         self.protocol_name = protocol_name
         self.binary_name = "./replicated-ring-party.x"
         self.compile_script = "./compile.py"
-        self.F_STAT_SENSITIVITY = 10.0 # Adjust based on your privacy needs
+        self.F_STAT_SENSITIVITY = 20.0 # Adjust based on your privacy needs
 
     def _calculate_sigma(self, epsilon, delta):
         if epsilon <= 0: return 1000.0
