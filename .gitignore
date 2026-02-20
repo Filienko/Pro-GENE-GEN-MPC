@@ -22,6 +22,8 @@ __pycache__/
 
 *.csv
 *.zip
+*.sch
+*.bc
 
 # MPC-SPDZ
 mpc_spdz/
