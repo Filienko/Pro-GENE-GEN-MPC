@@ -256,13 +256,13 @@ class MPCMarginalComputer:
         # 1. BRANCH LOGIC: Histogram vs Standard
         if protocol_name == 'histogram_marginals':
             print("INTEGRATED MPC WORKFLOW: Pre-computed Histograms (O(1) respect to N)")
-            mpc_sigma_marginal = int(sigma * 10000)
+            mpc_sigma_marginal_int = int(sigma * 10000)
             mpc_sigma_f_stat = 0
             
         elif deg_filtering is not None and deg_filtering > 0:
             print(f"INTEGRATED MPC WORKFLOW: DP-DEG Top-{deg_filtering} Filter → Binning → MSR")
             protocol_name = 'deg_dp_pipeline'
-            mpc_sigma_marginal = int(sigma * 10000)
+            mpc_sigma_marginal_int = int(sigma * 10000)
             eps_k = epsilon_topk if epsilon_topk else 1.0
             del_k = delta_topk if delta_topk else target_delta
             mpc_sigma_f_stat = calculate_f_stat_noise(
@@ -270,8 +270,8 @@ class MPCMarginalComputer:
             )
         else:
             print("INTEGRATED MPC WORKFLOW: Binning → MSR (Standard, All Genes)")
-            sigma_bin = int(sigma_bin * 10000)
-            mpc_sigma_marginal = int(sigma * 10000)
+            sigma_bin_int = int(sigma_bin * 10000)
+            mpc_sigma_marginal_int = int(sigma * 10000)
             mpc_sigma_f_stat = 0
             
         print("="*80)
@@ -306,7 +306,7 @@ class MPCMarginalComputer:
                 df_numeric = df_numeric.select_dtypes(include=['number'])
 
                 B = 10000
-                g_min, g_max = 0.0, 16.0
+                g_min, g_max = 0.0, 15.0
                 bins = np.linspace(g_min, g_max, B + 1)
                 
                 # Pre-allocate 1D array
@@ -334,9 +334,9 @@ class MPCMarginalComputer:
 
         # 2. CONSTRUCT ARGUMENTS DYNAMICALLY
         if protocol_name == 'deg_dp_pipeline':
-            args = party_sizes + [num_genes, num_classes, deg_filtering, mpc_sigma_marginal, mpc_sigma_f_stat, sigma_bin]
+            args = party_sizes + [num_genes, num_classes, deg_filtering, mpc_sigma_marginal_int, mpc_sigma_f_stat, sigma_bin_int]
         else:
-            args = party_sizes + [num_genes, num_classes, mpc_sigma_marginal, sigma_bin]
+            args = party_sizes + [num_genes, num_classes, mpc_sigma_marginal_int, sigma_bin_int]
 
         print(f"\nCompiling integrated MPC protocol: {protocol_name}...")
         self.executor.compile_protocol(protocol_name, args=args)

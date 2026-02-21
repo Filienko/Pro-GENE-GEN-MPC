@@ -142,7 +142,7 @@ class SecureMPCPrivatePGM:
     def train_from_party_files(self, party_data_files, config,
                                 marginal_protocol='ppai_msr_noisy_final',
                                 cliques=None, num_iters=10000, 
-                                deg_filtering=None, max_gene_val = 16, bin_num = 4):
+                                deg_filtering=None, max_gene_val = 15, bin_num = 4):
         """
         Train model from separate party data files (SECURE - no data leakage)
         """
@@ -197,7 +197,7 @@ class SecureMPCPrivatePGM:
             if self.target_delta > 0:
                 # Calculate the smallest possible bin size
                 # Using exact quartiles means each bin has 1/4th of the data
-                num_train = 1601 # TODO: change to computed number so that I do not need to do this
+                num_train = 945 # TODO: change to computed number so that I do not need to do this
                 bin_size = num_train / bin_num 
 
                 # Calculate the L2 sensitivity of the means
