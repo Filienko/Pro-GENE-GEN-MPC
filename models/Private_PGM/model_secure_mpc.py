@@ -25,6 +25,7 @@ import pandas as pd
 import sys
 import os
 import warnings
+import math
 
 # Add parent directories to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -141,7 +142,7 @@ class SecureMPCPrivatePGM:
     def train_from_party_files(self, party_data_files, config,
                                 marginal_protocol='ppai_msr_noisy_final',
                                 cliques=None, num_iters=10000, 
-                                deg_filtering=None):
+                                deg_filtering=None, max_gene_val = 16, bin_num = 4):
         """
         Train model from separate party data files (SECURE - no data leakage)
         """
@@ -194,7 +195,15 @@ class SecureMPCPrivatePGM:
                 self.delta_marginals = self.target_delta * 0.5
 
             if self.target_delta > 0:
-                sigma_bin = self.moments_calibration(1.0, 1.0, self.epsilon_binning, self.delta_binning)
+                # Calculate the smallest possible bin size
+                # Using exact quartiles means each bin has 1/4th of the data
+                num_train = 1601 # TODO: change to computed number so that I do not need to do this
+                bin_size = num_train / bin_num 
+
+                # Calculate the L2 sensitivity of the means
+                # How much one patient can change the mean * sqrt(number of genes)
+                l2_sensitivity_mean = (max_gene_val / bin_size) * math.sqrt(num_genes)                
+                sigma_bin = self.moments_calibration(l2_sensitivity_mean, 1e-9, self.epsilon_binning, self.delta_binning)
                 sigma_marginal = self.moments_calibration(1.0, 1.0, self.epsilon_marginals, self.delta_marginals)
             else:
                 sigma_bin = 1.0 / num_genes / 2.0

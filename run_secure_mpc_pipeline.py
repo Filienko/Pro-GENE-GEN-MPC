@@ -92,7 +92,7 @@ def validate_party_files(party_files):
 
 def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
                              mpspdz_path=None,
-                             marginal_protocol='ppai_msr_noisy_final',
+                             marginal_protocol='ppai_bin_msr',
                              deg_filtering=None, num_iters=10000):
     """
     Run the secure MPC pipeline with no data leakage

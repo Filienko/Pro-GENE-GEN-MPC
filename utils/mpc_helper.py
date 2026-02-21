@@ -245,7 +245,7 @@ class MPCMarginalComputer:
         self.splitter = HorizontalDataSplitter(num_parties=2)
         self.binner = MPCBinningComputer(mpspdz_path, protocol)
     def compute_marginals_with_binning(self, party_data_files, num_genes,
-                                       num_classes, target_delta, sigma, mpc_sigma_bin,
+                                       num_classes, target_delta, sigma, sigma_bin,
                                        deg_filtering=None, epsilon_topk=None, delta_topk=None,
                                        protocol_name='ppai_bin_msr'):
         """
@@ -270,8 +270,7 @@ class MPCMarginalComputer:
             )
         else:
             print("INTEGRATED MPC WORKFLOW: Binning → MSR (Standard, All Genes)")
-            protocol_name = 'ppai_bin_msr'
-            mpc_sigma_bin = int(sigma_bin * 10000)
+            sigma_bin = int(sigma_bin * 10000)
             mpc_sigma_marginal = int(sigma * 10000)
             mpc_sigma_f_stat = 0
             
@@ -335,9 +334,9 @@ class MPCMarginalComputer:
 
         # 2. CONSTRUCT ARGUMENTS DYNAMICALLY
         if protocol_name == 'deg_dp_pipeline':
-            args = party_sizes + [num_genes, num_classes, deg_filtering, mpc_sigma_marginal, mpc_sigma_f_stat, mpc_sigma_bin]
+            args = party_sizes + [num_genes, num_classes, deg_filtering, mpc_sigma_marginal, mpc_sigma_f_stat, sigma_bin]
         else:
-            args = party_sizes + [num_genes, num_classes, mpc_sigma_marginal, mpc_sigma_bin]
+            args = party_sizes + [num_genes, num_classes, mpc_sigma_marginal, sigma_bin]
 
         print(f"\nCompiling integrated MPC protocol: {protocol_name}...")
         self.executor.compile_protocol(protocol_name, args=args)

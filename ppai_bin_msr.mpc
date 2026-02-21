@@ -78,19 +78,30 @@ def bin_column_vectorized(gene_col, n):
     c2 = (gene_col < Q[2])
     binned_gene = 3 - c2 - c1 - c0
 
-    mean = sfix.Array(len(qtls)+1)
-    count = sfix.Array(len(qtls)+1)
+    mean = sfix.Array(4)
     
+    # Generate noise and recover sigma float
     noise_array = get_gaussian_value(size=4)
     sigma_bin_val = sfix(sigma_bin_int) / sfix(10000.0)
 
     for b in range(4):
+        # 1. Get indicator vector for this bin
         c_vec = (binned_gene == b)
-        count[b] = sum(c_vec)
-        mean[b] = sum(c_vec * gene_col) / count[b]
         
-        # Access the b-th element of our vectorized noise register
-        mean[b] = mean[b] + sigma_val * noise_array[b]
+        # 2. Calculate exact sum and count
+        exact_count = sum(c_vec)
+        exact_sum = sum(c_vec * gene_col)
+        
+        # 3. Prevent division by zero securely in MPC!
+        # If exact_count is 0, (exact_count == 0) evaluates to 1.
+        # So safe_count becomes 1. exact_sum is 0. 0/1 = 0 (Safe!).
+        safe_count = exact_count + (exact_count == 0)
+        
+        # 4. Secure division
+        exact_mean = exact_sum / safe_count
+        
+        # 5. Apply DP noise directly to the mean
+        mean[b] = exact_mean + (sigma_bin_val * noise_array[b])
 
     return binned_gene, mean
 
