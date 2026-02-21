@@ -247,7 +247,7 @@ class MPCMarginalComputer:
     def compute_marginals_with_binning(self, party_data_files, num_genes,
                                        num_classes, target_delta, sigma, 
                                        deg_filtering=None, epsilon_topk=None, delta_topk=None,
-                                       protocol_name='ppai_bin_msr'): # <-- Added protocol_name
+                                       protocol_name='ppai_bin_msr'):
         """
         Complete workflow: Pre-computes histograms or handles raw binning.
         """
@@ -257,7 +257,7 @@ class MPCMarginalComputer:
         if protocol_name == 'histogram_marginals':
             print("INTEGRATED MPC WORKFLOW: Pre-computed Histograms (O(1) respect to N)")
             mpc_sigma_marginal = int(sigma * 10000)
-            mpc_sigma_f_stat = 0 # Not used for this branch
+            mpc_sigma_f_stat = 0
             
         elif deg_filtering is not None and deg_filtering > 0:
             print(f"INTEGRATED MPC WORKFLOW: DP-DEG Top-{deg_filtering} Filter → Binning → MSR")
@@ -297,7 +297,7 @@ class MPCMarginalComputer:
             df = pd.read_csv(party_file)
             input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
             
-            # --- NEW LOCAL HISTOGRAM LOGIC ---
+            # --- LOCAL HISTOGRAM LOGIC ---
             if protocol_name == 'histogram_marginals':
                 print(f"  [Party {party_idx}] Generating local 1D histograms...")
                 # Extract labels and purely numeric features
@@ -318,12 +318,11 @@ class MPCMarginalComputer:
                         class_mask = (labels == c)
                         counts, _ = np.histogram(gene_col[class_mask], bins=bins)
                         
-                        # Highly optimized vectorized assignment to matching MPC indices
+                        # Vectorized assignment to matching MPC indices
                         start_idx = g * (B * num_classes) + c
                         end_idx = start_idx + (B * num_classes)
                         flat_hist[start_idx:end_idx:num_classes] = counts
 
-                # Fast string write
                 with open(input_file, 'w') as f:
                     f.write(' '.join(map(str, flat_hist)) + '\n')
                 print(f"  [Party {party_idx}] Successfully wrote {len(flat_hist)} integers.")

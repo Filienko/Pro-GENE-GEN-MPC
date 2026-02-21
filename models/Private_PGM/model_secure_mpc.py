@@ -139,10 +139,9 @@ class SecureMPCPrivatePGM:
         return sigma
 
     def train_from_party_files(self, party_data_files, config,
-                                bin_protocol='ppai_bin',
                                 marginal_protocol='ppai_msr_noisy_final',
                                 cliques=None, num_iters=10000, 
-                                deg_filtering=None): # <-- Added parameter
+                                deg_filtering=None):
         """
         Train model from separate party data files (SECURE - no data leakage)
         """

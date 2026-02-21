@@ -91,7 +91,7 @@ def validate_party_files(party_files):
 
 
 def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
-                             mpspdz_path=None, bin_protocol='ppai_bin',
+                             mpspdz_path=None,
                              marginal_protocol='ppai_msr_noisy_final',
                              deg_filtering=None, num_iters=10000):
     """
@@ -103,7 +103,6 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
         epsilon: Privacy parameter epsilon
         delta: Privacy parameter delta
         mpspdz_path: Path to MP-SPDZ installation
-        bin_protocol: MPC protocol for binning
         marginal_protocol: MPC protocol for marginals
         num_iters: Number of inference iterations
 
@@ -166,7 +165,6 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
     model.train_from_party_files(
         party_data_files=party_files,
         config=config,
-        bin_protocol=bin_protocol,
         marginal_protocol=marginal_protocol,
         num_iters=num_iters,
         deg_filtering=deg_filtering
@@ -276,12 +274,6 @@ SECURITY GUARANTEE:
         help='Privacy parameter delta (default: 1e-5)'
     )
     parser.add_argument(
-        '--bin_protocol',
-        type=str,
-        default='ppai_bin',
-        help='MPC protocol for binning (default: ppai_bin)'
-    )
-    parser.add_argument(
         '--marginal_protocol',
         type=str,
         default='ppai_msr_noisy_final',
@@ -303,7 +295,6 @@ SECURITY GUARANTEE:
         epsilon=args.epsilon,
         delta=args.delta,
         mpspdz_path=args.mpspdz_path,
-        bin_protocol=args.bin_protocol,
         marginal_protocol=args.marginal_protocol,
         num_iters=args.num_iters,
         deg_filtering=args.deg_filtering
