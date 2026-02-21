@@ -212,6 +212,7 @@ class SecureMPCPrivatePGM:
             num_classes=num_classes,
             target_delta=self.target_delta,
             sigma=sigma_marginal,
+            sigma_bin=sigma_bin,
             deg_filtering=deg_filtering, # Pass DEG k
             epsilon_topk=eps_topk,       # Pass Top-K allocated epsilon
             delta_topk=delta_topk,        # Pass Top-K allocated delta
