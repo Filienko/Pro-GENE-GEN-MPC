@@ -305,8 +305,8 @@ class MPCMarginalComputer:
                 df_numeric = df.drop(columns=['label']) if 'label' in df.columns else df.iloc[:, :-1]
                 df_numeric = df_numeric.select_dtypes(include=['number'])
 
-                B = 1000
-                g_min, g_max = 0.0, 15.0
+                B = 10000
+                g_min, g_max = 0.0, 16.0
                 bins = np.linspace(g_min, g_max, B + 1)
                 
                 # Pre-allocate 1D array

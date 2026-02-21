@@ -11,14 +11,14 @@ sigma_int = int(program.args[5])
 target_delta = 1e-5
 
 N = num_patients_0 + num_patients_1
-B = 100 
+B = 10000 
 
 q1_target = int((N - 1) * 0.25)
 q2_target = int((N - 1) * 0.50)
 q3_target = int((N - 1) * 0.75)
 
 # Calculate the actual log-space midpoints of the public buckets
-global_min, global_max = 0.0, 22.0
+global_min, global_max = 0.0, 16.0
 bucket_size = (global_max - global_min) / B
 bucket_midpoints = sfix.Array(B)
 for b in range(B):
