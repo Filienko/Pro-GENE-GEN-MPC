@@ -10,6 +10,8 @@ num_patients_1 = int(program.args[2]) #950
 num_genes = int(program.args[3]) #958
 num_classes = int(program.args[4]) #5
 sigma_int = int(program.args[5])
+sigma_bin_int = int(program.args[6])
+
 target_delta = 1e-5
 num_data_custodians = 2
 qtls = [0.25, 0.5, 0.75]
@@ -79,10 +81,9 @@ def bin_column_vectorized(gene_col, n):
     mean = sfix.Array(len(qtls)+1)
     count = sfix.Array(len(qtls)+1)
     
-    # NEW: Generate noise for all 4 bins simultaneously using the vectorized function
     noise_array = get_gaussian_value(size=4)
-    sigma_val = sfix(0) # Kept as 0 per your original code
-    
+    sigma_bin_val = sfix(sigma_bin_int) / sfix(10000.0)
+
     for b in range(4):
         c_vec = (binned_gene == b)
         count[b] = sum(c_vec)
