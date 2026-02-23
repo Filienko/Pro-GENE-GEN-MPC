@@ -189,10 +189,10 @@ class SecureMPCPrivatePGM:
                 print(f"  Marginals: ε={self.epsilon_marginals:.3f}, δ={self.delta_marginals}")
             else:
                 # Guided by the realization that marginal selection does not matter as much, since even random features worked well. 
-                self.epsilon_binning = self.target_epsilon * 0.9
-                self.epsilon_marginals = self.target_epsilon * 0.1
-                self.delta_binning = self.target_delta * 0.9
-                self.delta_marginals = self.target_delta * 0.1
+                self.epsilon_binning = self.target_epsilon * 0.7
+                self.epsilon_marginals = self.target_epsilon * 0.3
+                self.delta_binning = self.target_delta * 0.7
+                self.delta_marginals = self.target_delta * 0.3
 
             if self.target_delta > 0:
                 # Calculate the smallest possible bin size
