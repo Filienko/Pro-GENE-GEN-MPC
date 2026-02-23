@@ -65,7 +65,7 @@ def compute_cluster_preservation(X_real, y_real, X_synth, y_synth):
 # MAIN BENCHMARK PIPELINE
 # ==========================================
 
-def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[5, 10, 50, 100, 200, 500, 750, 1000], n_runs=3):
+def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,200,400,600,1000], n_runs=3):
     print(f"Loading full dataset from {full_data_path}...")
     df = pd.read_csv(full_data_path)
 
@@ -134,8 +134,10 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[5, 1
             print(f"--- Evaluating Downstream Utility & Fidelity (Run {run_id + 1}) ---")
             X_train_real = train_df.drop(columns=['label'])
             y_train_real = train_df['label']
+
             X_train_synth = synth_df.drop(columns=['label'])
-            y_train_synth = synth_df['label']
+            y_train_synth = synth_df['label'].round().astype(int) 
+
             X_test = test_df.drop(columns=['label'])
             y_test = test_df['label']
 

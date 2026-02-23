@@ -19,6 +19,7 @@ import numpy as np
 MPC_METRICS = {
     'compile_time': 0.0, 
     'execute_time': 0.0,
+    'data_sent_mb': 0.0,
     'integer_bits': 0,
     'integer_opens': 0,
     'integer_triples': 0,
@@ -95,12 +96,26 @@ class MPCProtocolExecutor:
         protocol_script = os.path.join(self.mpspdz_path, 'Scripts', f'{self.protocol}.sh')
         full_protocol_name = protocol_name + "-" + "-".join([str(arg) for arg in args]) if args else protocol_name
         cmd = [protocol_script, full_protocol_name]
-
         try:
             start_time = time.time()
             result = subprocess.run(cmd, cwd=self.mpspdz_path, capture_output=True, text=True, check=True)
             MPC_METRICS['execute_time'] += (time.time() - start_time)
+            
+            # --- NEW: PARSE DATA SENT ---
+            # Search both stdout and stderr just in case MP-SPDZ routes it differently
+            combined_output = result.stdout + result.stderr
+            
+            # MP-SPDZ prints things like: "Data sent = 12.34 MB"
+            data_sent_matches = re.findall(r'Data sent = ([\d\.]+)\s*MB', combined_output)
+            
+            if data_sent_matches:
+                # Sum the MB sent by all parties
+                total_mb = sum(float(match) for match in data_sent_matches)
+                MPC_METRICS['data_sent_mb'] += total_mb
+            # -----------------------------
+
             return result
+
         except subprocess.CalledProcessError as e:
             print(f"\n{'='*80}")
             print(f"MPC PROTOCOL EXECUTION FAILED")
