@@ -85,10 +85,10 @@ def validate_party_files(party_files):
     # Infer number of classes (need to check at least one file)
     df_first = pd.read_csv(party_files[0])
     num_classes = len(df_first['label'].unique())
-    print(f"  Classes: {num_classes}")
-
-    return num_features, num_classes, column_names
-
+    total_samples = sum(num_samples_list)
+    print(f"  Total samples: {total_samples}")
+    
+    return num_features, num_classes, column_names, total_samples
 
 def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
                              mpspdz_path=None,
@@ -123,7 +123,7 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
         raise FileNotFoundError(f"MP-SPDZ not found at: {mpspdz_path}")
 
     # Validate party files
-    num_features, num_classes, column_names = validate_party_files(party_files)
+    num_features, num_classes, column_names, total_samples = validate_party_files(party_files)
 
     # Configure domain (4 bins per feature)
     config = {}
@@ -176,11 +176,6 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
     print("="*80)
 
     # Determine number of samples to generate
-    total_samples = sum(
-        sum(1 for _ in open(f)) - 1
-        for f in party_files
-    )
-
     synthetic_continuous = model.generate_continuous(num_rows=total_samples)
     
     # NEW: Fetch the dynamically selected column names from the model 
