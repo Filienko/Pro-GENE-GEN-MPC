@@ -21,11 +21,11 @@ def compute_1d_marginals_and_zero_rates(real_df, synth_df):
     # Zero rates
     z_real = (real_df == 0).mean()
     z_synth = (synth_df == 0).mean()
-    
+
     # Non-zero means
     mean_real = real_df.replace(0, np.nan).mean().fillna(0)
     mean_synth = synth_df.replace(0, np.nan).mean().fillna(0)
-    
+
     def mare(a, b):
         denom = np.maximum(a, b)
         denom[denom == 0] = 1e-9 # avoid div by zero
@@ -43,49 +43,29 @@ def compute_feature_importance_agreement(X_real, y_real, X_synth, y_synth):
     """Kendall-Tau agreement of Random Forest feature importances"""
     clf_real = RandomForestClassifier(n_estimators=50, random_state=42).fit(X_real, y_real)
     clf_synth = RandomForestClassifier(n_estimators=50, random_state=42).fit(X_synth, y_synth)
-    
+
     tau, _ = kendalltau(clf_real.feature_importances_, clf_synth.feature_importances_)
     return float(tau) if not np.isnan(tau) else 0.0
 
 def compute_cluster_preservation(X_real, y_real, X_synth, y_synth):
     """Adjusted Rand Index (ARI) difference for K-Means clustering (patient overlap)"""
     n_clusters = len(np.unique(y_real))
-    
+
     # How well do natural clusters map to the labels in real data?
     km_real = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto').fit(X_real)
     ari_real = adjusted_rand_score(y_real, km_real.labels_)
-    
+
     # How well do natural clusters map to the labels in synthetic data?
     km_synth = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto').fit(X_synth)
     ari_synth = adjusted_rand_score(y_synth, km_synth.labels_)
-    
+
     return float(ari_real), float(ari_synth)
-
-# ==========================================
-# BASELINE: TRAIN ON REAL DATA
-# ==========================================
-
-def compute_baseline_accuracy(train_df, test_df):
-    """
-    Upper-bound baseline: train a Random Forest on the full (concatenated) real
-    training data from both parties and evaluate on the held-out real test set.
-    This represents the best accuracy we could expect without any privacy constraints.
-    """
-    X_train = train_df.drop(columns=['label'])
-    y_train = train_df['label']
-    X_test  = test_df.drop(columns=['label'])
-    y_test  = test_df['label']
-
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
-    clf.fit(X_train, y_train)
-    acc = accuracy_score(y_test, clf.predict(X_test))
-    return float(acc)
 
 # ==========================================
 # MAIN BENCHMARK PIPELINE
 # ==========================================
 
-def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,200,400,600,1000], n_runs=3):
+def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[800,1000], n_runs=3):
     print(f"Loading full dataset from {full_data_path}...")
     df = pd.read_csv(full_data_path)
 
@@ -122,15 +102,6 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,
         train_df, test_df = train_test_split(df_sub, test_size=0.2, random_state=42, stratify=df_sub['label'])
         party1_df, party2_df = train_test_split(train_df, test_size=0.5, random_state=42, stratify=train_df['label'])
 
-        # ----------------------------------------------------------
-        # BASELINE: concatenate both parties' real training data and
-        # evaluate on the shared real test set (no MPC / DP involved).
-        # This gives an upper-bound reference for downstream accuracy.
-        # ----------------------------------------------------------
-        print(f"\n--- [Features: {n_features_to_use}] Computing real-data baseline ---")
-        baseline_acc = compute_baseline_accuracy(train_df, test_df)
-        print(f"    Baseline accuracy (train on real, test on real): {baseline_acc:.4f}")
-
         party1_path, party2_path = f"tmp_p1_{n_features_to_use}.csv", f"tmp_p2_{n_features_to_use}.csv"
         synth_out_path = f"tmp_synthetic_{n_features_to_use}.csv"
 
@@ -141,7 +112,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,
 
         for run_id in range(n_runs):
             print(f"\n--- [Features: {n_features_to_use}] Executing DP-MPC Run {run_id + 1}/{n_runs} ---")
-            
+
             # Ensure network tracking metric exists and reset ALL metrics
             if 'data_sent_mb' not in mpc_helper.MPC_METRICS:
                 mpc_helper.MPC_METRICS['data_sent_mb'] = 0.0
@@ -149,24 +120,28 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,
                 mpc_helper.MPC_METRICS[key] = 0 if isinstance(mpc_helper.MPC_METRICS[key], int) else 0.0
 
             try:
+                # UPDATED: Using the new log_bin_marginals protocol
                 synth_df = run_secure_mpc_pipeline(
                     party_files=[party1_path, party2_path],
                     output_path=synth_out_path,
                     epsilon=10.0,
                     delta=1e-5,
-                    marginal_protocol='ppai_bin_msr',
                     mpspdz_path=mpspdz_path,
+                    marginal_protocol="log_bin_marginals" # <--- POINTING TO NEW PROTOCOL
                 )
             except Exception as e:
                 print(f"Pipeline failed for {n_features_to_use} features on Run {run_id + 1}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
             print(f"--- Evaluating Downstream Utility & Fidelity (Run {run_id + 1}) ---")
             X_train_real = train_df.drop(columns=['label'])
             y_train_real = train_df['label']
 
+            # Round synthetic labels to int for classification
             X_train_synth = synth_df.drop(columns=['label'])
-            y_train_synth = synth_df['label'].round().astype(int) 
+            y_train_synth = synth_df['label'].round().astype(int)
 
             X_test = test_df.drop(columns=['label'])
             y_test = test_df['label']
@@ -199,12 +174,12 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,
             continue
 
         print(f"\n--- Averaging metrics across {len(run_metrics_list)} successful runs ---")
-        avg_metrics = {'num_features': n_features_to_use, 'baseline_accuracy': round(baseline_acc, 4)}
-        keys_to_avg = ['accuracy', 'feat_rank_tau', 'mare_zero_rate', 'mare_nz_mean', 
-                       'corr_diff_mae', 'ari_real', 'ari_synth', 
+        avg_metrics = {'num_features': n_features_to_use}
+        keys_to_avg = ['accuracy', 'feat_rank_tau', 'mare_zero_rate', 'mare_nz_mean',
+                       'corr_diff_mae', 'ari_real', 'ari_synth',
                        'compile_time', 'execute_time', 'data_sent_mb',
                        'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds']
-        
+
         for k in keys_to_avg:
             vals = [rm[k] for rm in run_metrics_list]
             if isinstance(vals[0], float):
@@ -227,12 +202,12 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,
     print(f" FINAL BENCHMARK RESULTS (Averaged over {n_runs} runs)")
     print("="*80)
 
-    # Reorder columns — baseline_accuracy sits right next to accuracy for easy comparison
-    cols = ['num_features', 'baseline_accuracy', 'accuracy', 'feat_rank_tau',
-            'mare_zero_rate', 'mare_nz_mean', 'corr_diff_mae', 'ari_real', 'ari_synth', 
+    # Reorder columns
+    cols = ['num_features', 'accuracy', 'feat_rank_tau', 'mare_zero_rate', 'mare_nz_mean',
+            'corr_diff_mae', 'ari_real', 'ari_synth',
             'compile_time', 'execute_time', 'data_sent_mb',
             'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds']
-    
+
     results_df = pd.DataFrame(results)[cols]
     print(results_df.to_string(index=False))
     results_df.to_csv("benchmark_mpc_fidelity_results.csv", index=False)

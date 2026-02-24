@@ -259,25 +259,36 @@ class MPCMarginalComputer:
         self.executor = MPCProtocolExecutor(mpspdz_path, protocol)
         self.splitter = HorizontalDataSplitter(num_parties=2)
         self.binner = MPCBinningComputer(mpspdz_path, protocol)
+
     def compute_marginals_with_binning(self, party_data_files, num_genes,
                                        num_classes, target_delta, sigma, sigma_bin,
                                        deg_filtering=None, epsilon_topk=None, delta_topk=None,
                                        protocol_name='ppai_bin_msr'):
         """
-        Complete workflow: Pre-computes histograms or handles raw binning.
+        Complete workflow: Pre-computes histograms, handles raw binning, or prepares log-binned integers.
         """
         print("\n" + "="*80)
         
-        # 1. BRANCH LOGIC: Histogram vs Standard
+        # Initialize variables
+        mpc_sigma_f_stat = 0
+        sigma_bin_int = 0
+        
+        # 1. BRANCH LOGIC: Select Strategy
         if protocol_name == 'histogram_marginals':
             print("INTEGRATED MPC WORKFLOW: Pre-computed Histograms (O(1) respect to N)")
             mpc_sigma_marginal_int = int(sigma * 10000)
-            mpc_sigma_f_stat = 0
+            
+        elif protocol_name == 'log_bin_marginals':
+            print("INTEGRATED MPC WORKFLOW: Log-Binning (Zero-Isolated) → Integer MPC")
+            # Sensitivity is managed by the standard sigma calculation passed in.
+            mpc_sigma_marginal_int = int(sigma * 10000)
             
         elif deg_filtering is not None and deg_filtering > 0:
             print(f"INTEGRATED MPC WORKFLOW: DP-DEG Top-{deg_filtering} Filter → Binning → MSR")
             protocol_name = 'deg_dp_pipeline'
             mpc_sigma_marginal_int = int(sigma * 10000)
+            sigma_bin_int = int(sigma_bin * 10000)
+            
             eps_k = epsilon_topk if epsilon_topk else 1.0
             del_k = delta_topk if delta_topk else target_delta
             mpc_sigma_f_stat = calculate_f_stat_noise(
@@ -285,12 +296,13 @@ class MPCMarginalComputer:
             )
         else:
             print("INTEGRATED MPC WORKFLOW: Binning → MSR (Standard, All Genes)")
+            # Standard float processing
             sigma_bin_int = int(sigma_bin * 10000)
             mpc_sigma_marginal_int = int(sigma * 10000)
-            mpc_sigma_f_stat = 0
             
         print("="*80)
         
+        # Check Protocol File
         mpc_file_path = os.path.join(self.executor.mpspdz_path, f'{protocol_name}.mpc')
         if not os.path.exists(mpc_file_path):
             raise FileNotFoundError(f"MPC protocol file not found: {mpc_file_path}")
@@ -298,7 +310,7 @@ class MPCMarginalComputer:
         # Calculate party sizes
         party_sizes = []
         import pandas as pd
-        import numpy as np # Ensure numpy is available
+        import numpy as np 
         
         for party_file in party_data_files:
             party_sizes.append(len(pd.read_csv(party_file)))
@@ -312,10 +324,43 @@ class MPCMarginalComputer:
             df = pd.read_csv(party_file)
             input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
             
-            # --- LOCAL HISTOGRAM LOGIC ---
-            if protocol_name == 'histogram_marginals':
+            # --- STRATEGY A: LOG-BINNING (Integers) ---
+            if protocol_name == 'log_bin_marginals':
+                print(f"  [Party {party_idx}] Performing Local Log-Binning...")
+                
+                # Separate Label
+                labels = df['label'].values if 'label' in df.columns else df.iloc[:, -1].values
+                df_feats = df.drop(columns=['label']) if 'label' in df.columns else df.iloc[:, :-1]
+                
+                # 1. Log Transform (if needed)
+                # Heuristic: if max > 50, it's likely raw counts.
+                if df_feats.max().max() > 50:
+                    X_log = np.log2(df_feats + 1)
+                else:
+                    X_log = df_feats
+                    
+                # 2. Zero-Isolated Binning
+                # Bin 0: < 0.1 (Noise/Zero)
+                # Bins 1-3: Split [0.1, 15.0] equally
+                noise_floor = 0.1
+                max_val = 15.0
+                step = (max_val - noise_floor) / 3.0
+                thresholds = [noise_floor, noise_floor + step, noise_floor + 2*step]
+                
+                # Apply digitize (returns 0, 1, 2, 3)
+                X_binned = np.digitize(X_log.values, thresholds)
+                
+                # 3. Write Integers to MPC Input
+                with open(input_file, 'w') as f:
+                    for r in range(len(df)):
+                        # Join gene bins + label
+                        row_str = " ".join(map(str, X_binned[r])) + " " + str(int(labels[r]))
+                        f.write(row_str + "\n")
+                print(f"    Wrote {len(df)} rows of integer inputs.")
+
+            # --- STRATEGY B: PRE-COMPUTED HISTOGRAMS (Integers) ---
+            elif protocol_name == 'histogram_marginals':
                 print(f"  [Party {party_idx}] Generating local 1D histograms...")
-                # Extract labels and purely numeric features
                 labels = df['label'].values if 'label' in df.columns else df.iloc[:, -1].values
                 df_numeric = df.drop(columns=['label']) if 'label' in df.columns else df.iloc[:, :-1]
                 df_numeric = df_numeric.select_dtypes(include=['number'])
@@ -324,7 +369,6 @@ class MPCMarginalComputer:
                 g_min, g_max = 0.0, 15.0
                 bins = np.linspace(g_min, g_max, B + 1)
                 
-                # Pre-allocate 1D array
                 flat_hist = np.zeros(num_genes * B * num_classes, dtype=int)
                 
                 for g in range(num_genes):
@@ -333,7 +377,6 @@ class MPCMarginalComputer:
                         class_mask = (labels == c)
                         counts, _ = np.histogram(gene_col[class_mask], bins=bins)
                         
-                        # Vectorized assignment to matching MPC indices
                         start_idx = g * (B * num_classes) + c
                         end_idx = start_idx + (B * num_classes)
                         flat_hist[start_idx:end_idx:num_classes] = counts
@@ -341,6 +384,8 @@ class MPCMarginalComputer:
                 with open(input_file, 'w') as f:
                     f.write(' '.join(map(str, flat_hist)) + '\n')
                 print(f"  [Party {party_idx}] Successfully wrote {len(flat_hist)} integers.")
+
+            # --- STRATEGY C: STANDARD / DEG (Floats) ---
             else:
                 df_numeric = df[df.select_dtypes(include=['number']).columns.tolist()]
                 with open(input_file, 'w') as f:
@@ -348,6 +393,8 @@ class MPCMarginalComputer:
                         f.write(' '.join([str(val) for val in row]) + '\n')
 
         # 2. CONSTRUCT ARGUMENTS DYNAMICALLY
+        # Note: log_bin_marginals expects 5 args (N0, N1, Genes, Classes, Sigma)
+        # We append sigma_bin_int (0) anyway; MP-SPDZ ignores extra args at the end.
         if protocol_name == 'deg_dp_pipeline':
             args = party_sizes + [num_genes, num_classes, deg_filtering, mpc_sigma_marginal_int, mpc_sigma_f_stat, sigma_bin_int]
         else:
@@ -369,10 +416,13 @@ class MPCMarginalComputer:
         )
 
         print("\n" + "="*80)
-        print("✓ Complete! Only noisy marginals and means revealed - binned data stayed secret")
+        print("✓ Complete! Only noisy marginals revealed.")
+        if protocol_name == 'log_bin_marginals':
+             print("  (Note: Bin means are intentionally empty/null for this strategy)")
         print("="*80 + "\n")
 
         return measurements_1way, measurements_2way, bin_means_array, selected_indices
+
 
     def _parse_marginals_output(self, stdout, num_genes, num_classes):
             lines = stdout.split('\n')

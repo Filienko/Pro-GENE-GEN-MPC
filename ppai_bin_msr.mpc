@@ -2,6 +2,7 @@ import math
 import random
 from Compiler import ml
 from Compiler.library import vectorize
+sfix.set_precision(16, 40)
 
 ############# Getting secret shares #############
 
@@ -10,7 +11,7 @@ num_patients_1 = int(program.args[2]) #950
 num_genes = int(program.args[3]) #958
 num_classes = int(program.args[4]) #5
 sigma_int = int(program.args[5])
-sigma_bin_int = int(program.args[6])
+sigma_bin_int = 15000 # int(program.args[6])
 
 target_delta = 1e-5
 num_data_custodians = 2
