@@ -263,7 +263,7 @@ class MPCMarginalComputer:
     def compute_marginals_with_binning(self, party_data_files, num_genes,
                                        num_classes, target_delta, sigma, sigma_bin,
                                        deg_filtering=None, epsilon_topk=None, delta_topk=None,
-                                       protocol_name='ppai_bin_msr', max_val = 15.0):
+                                       protocol_name='ppai_bin_msr', max_val = 15):
         """
         Complete workflow: Pre-computes histograms, handles raw binning, or prepares log-binned integers.
         """
@@ -365,8 +365,8 @@ class MPCMarginalComputer:
                 df_numeric = df_numeric.select_dtypes(include=['number'])
 
                 B = 10000
-                g_min, g_max = 0.0, 15.0
-                bins = np.linspace(g_min, g_max, B + 1)
+                g_min = 0.0
+                bins = np.linspace(g_min, max_val, B + 1)
                 
                 flat_hist = np.zeros(num_genes * B * num_classes, dtype=int)
                 
