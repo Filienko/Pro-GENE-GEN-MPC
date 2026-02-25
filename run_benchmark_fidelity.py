@@ -85,7 +85,7 @@ def compute_baseline_accuracy(train_df, test_df):
 # MAIN BENCHMARK PIPELINE
 # ==========================================
 
-def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,200,400,600,1000], n_runs=3):
+def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[800,1000], n_runs=3):
     print(f"Loading full dataset from {full_data_path}...")
     df = pd.read_csv(full_data_path)
 

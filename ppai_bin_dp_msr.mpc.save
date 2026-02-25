@@ -2,20 +2,20 @@ import math
 from Compiler import ml
 from Compiler.library import vectorize, for_range, for_range_opt
 
-# Precision settings: 12 fractional, 29 total. 
-# Safe range for values: +/- 131,072.
-sfix.set_precision(12, 29)
+# OPTIMIZATION: Precision
+# f=16 (fractional), k=33 (total).
+# Integer bits = 33 - 16 = 17 bits (Range +/- 65,536).
+# Fits '22264' comfortably.
+sfix.set_precision(16, 33)
 
 ############# Getting secret shares #############
 
-num_patients_0 = int(program.args[1])
-num_patients_1 = int(program.args[2])
-num_genes = int(program.args[3])
-num_classes = int(program.args[4])
-
-# Convert args to sfix
-sigma = sfix(float(program.args[5]))
-sigma_bin = sfix(float(program.args[6]))
+num_patients_0 = int(program.args[1]) 
+num_patients_1 = int(program.args[2]) 
+num_genes = int(program.args[3])      
+num_classes = int(program.args[4])    
+sigma = sfix(program.args[5])
+sigma_bin_val = sfix(program.args[6])
 
 target_delta = 1e-5
 qtls = [0.25, 0.5, 0.75]
@@ -27,12 +27,13 @@ N = num_patients_0 + num_patients_1
 data_0.input_from(0)
 data_1.input_from(1)
 
-############# Combined data & Transpose #############
+############# Combined data & Transpose Trick #############
 print_ln('Transposing data...')
 
 train_data_T = sfix.Matrix(num_genes, N)
 train_labels = sfix.Array(N)
 
+# Using @for_range_opt to keep compilation fast
 @for_range_opt(num_patients_0)
 def _(i):
     @for_range_opt(num_genes)
@@ -52,16 +53,12 @@ def _(i):
 @vectorize
 def get_gaussian_value():
     sum_u = sfix(0)
-    # 12 iterations for Irwin-Hall (approx Normal dist)
     for _ in range(12):
         sum_u += sfix.get_random(0, 1)
     return sum_u - 6
 
-def bin_column_with_precomputed_noise(gene_col, n, noise_vec_4):
-    """
-    Same as before, but takes 'noise_vec_4' as input 
-    to avoid calling RNG inside the loop.
-    """
+def bin_column_vectorized(gene_col, n):
+    # gene_col is expected to be a vector here
     gene1_q = Array.create_from(gene_col)
     gene1_q.sort()
 
@@ -87,15 +84,20 @@ def bin_column_with_precomputed_noise(gene_col, n, noise_vec_4):
 
     mean = sfix.Array(4)
 
+    # Generate noise as vector, but access by constant index [b] is fine
+    noise_array = get_gaussian_value(size=4)
+    
+    # Optimization: Multiplication
+    sigma_bin_val = sfix(sigma_bin_int) * 0.0001
+
     for b in range(4):
         c_vec = (binned_gene == b)
         exact_count = sum(c_vec)
         exact_sum = sum(c_vec * gene_col)
-
+        
         safe_count = exact_count + (exact_count == 0)
         exact_mean = exact_sum / safe_count
-        # Use the pre-computed noise passed in
-        mean[b] = exact_mean + (sigma_bin * noise_vec_4[b])
+        mean[b] = exact_mean + (sigma_bin_val * noise_array[b])
 
     return binned_gene, mean
 
@@ -105,42 +107,35 @@ print_ln('Starting secure binning...')
 
 mean_matrix = sfix.Matrix(num_genes, 4)
 
-# OPTIMIZATION: Generate ALL binning noise at once.
-# Size: num_genes * 4 bins
-print_ln('Generating binning noise batch...')
-bin_noise_flat = get_gaussian_value(size=num_genes * 4)
-# Move to Array for indexed access
-bin_noise_storage = Array.create_from(bin_noise_flat)
-
 @for_range_opt(num_genes)
 def _(j):
-    # Load row as vector
+    # .get_vector() loads the row from memory to register for fast SIMD
     gene_col = train_data_T[j].get_vector()
-
-    # Extract the specific 4 noise values for this gene
-    # .get_vector(base, size) reads from the Array
-    current_noise = bin_noise_storage.get_vector(j * 4, 4)
-
-    binned_col, mean1 = bin_column_with_precomputed_noise(gene_col, N, current_noise)
-
+    
+    binned_col, mean1 = bin_column_vectorized(gene_col, N)
+    
     for b in range(4):
         mean_matrix[j][b] = mean1[b]
-
+        
     # Write back
     train_data_T[j] = binned_col
 
 stop_timer(200)
 print_ln('Binning complete')
 
-############# STEP 2: MARGINALS #############
+############# STEP 2: COMPUTE MARGINALS ON BINNED DATA (SECRET) #############
 start_timer(300)
-print_ln('Computing marginals...')
+print_ln('Computing marginals on binned data...')
 
 real_counts = sfix.Matrix(num_genes, 4)
 real_counts_l = sfix.Array(num_classes)
 real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)
 
+# Store label vectors in Matrix for easy row access
 label_is_vecs = sfix.Matrix(num_classes, N)
+
+# Pre-compute label vectors
+# Load train_labels to vector first for fast comparison
 train_labels_vec = train_labels.get_vector()
 
 @for_range(num_classes)
@@ -149,66 +144,79 @@ def _(l):
     label_is_vecs[l] = l_vec
     real_counts_l[l] = sum(l_vec)
 
+# Compute marginals
 @for_range_opt(num_genes)
 def _(j):
+    # Load row as vector
     val_r = train_data_T[j].get_vector()
 
-    # Polynomial indicators
     r_minus_10 = 1 - val_r
     r_minus_1 = val_r - 1
     r_minus_20 = 2 - val_r
     r_minus_2 = val_r - 2
     r_minus_30 = 3 - val_r
-
+    
+    # Vectorized indicator calculations
     ind_0 = (r_minus_10 * r_minus_20 * r_minus_30) / 6
     ind_1 = (val_r * r_minus_20 * r_minus_30) / 2
     ind_2 = (val_r * r_minus_1 * r_minus_30) / 2
     ind_3 = (val_r * r_minus_1 * r_minus_2) / 6
     
+    # Store these temporarily. They are vectors (registers).
     gene_is_vecs = [ind_0, ind_1, ind_2, ind_3]
 
     for f in range(4):
         real_counts[j][f] = sum(gene_is_vecs[f])
         feat_idx = f * num_classes
+        
         for c in range(num_classes):
+            # label_is_vecs[c] is a MemValue (row), .get_vector() makes it a register
+            # dot_product requires two registers (vectors)
             real_counts_2way[j][feat_idx + c] = sfix.dot_product(gene_is_vecs[f], label_is_vecs[c].get_vector())
 
 stop_timer(300)
 
-############# STEP 3: ADD NOISE (VECTORIZED) #############
+############# STEP 3: ADD NOISE (SECRET) #############
 start_timer(400)
-print_ln('Adding DP noise (Vectorized)...')
+print_ln('Adding DP noise...')
 
-# --- 1-Way Features Noise ---
-# Load entire matrix as one vector (size: num_genes * 4)
-flat_counts_1way = real_counts.get_vector()
-noise_1way = get_gaussian_value(size=num_genes * 4)
+sigma = sfix(sigma_int) * 0.0001
 
-# Single instruction addition
-noisy_1way = flat_counts_1way + (noise_1way * sigma)
-# Write back en masse
-real_counts.assign_vector(noisy_1way)
+# FIX 1: Generate noise as vector, then wrap in Array.create_from()
+# This allows 'noise_1way_features[idx]' to work with runtime index 'idx'
+noise_1way_features_vec = get_gaussian_value(size=(num_genes * 4))
+noise_1way_features = Array.create_from(noise_1way_features_vec)
 
-# --- 1-Way Labels Noise ---
-flat_labels = real_counts_l.get_vector()
-noise_labels = get_gaussian_value(size=num_classes)
-noisy_labels = flat_labels + (noise_labels * sigma)
-real_counts_l.assign_vector(noisy_labels)
+noise_1way_labels_vec = get_gaussian_value(size=num_classes)
+noise_1way_labels = Array.create_from(noise_1way_labels_vec)
 
-# --- 2-Way Noise ---
+@for_range_opt(num_genes)
+def _(i):
+    for j in range(4):
+        idx = (i * 4) + j
+        real_counts[i][j] = real_counts[i][j] + (sigma * noise_1way_features[idx])
+
+@for_range_opt(num_classes)
+def _(i):
+    real_counts_l[i] = real_counts_l[i] + (sigma * noise_1way_labels[i])
+
+# 2-way marginals noise
 if target_delta == 0:
     sigma_2way = 1.0 / num_genes / 2.0
 else:
     sigma_2way = sigma
 
-# Size: num_genes * 4 * num_classes
-total_2way_size = num_genes * 4 * num_classes
-flat_counts_2way = real_counts_2way.get_vector()
-noise_2way = get_gaussian_value(size=total_2way_size)
+total_2way_elements = num_genes * 4 * num_classes
 
-# Single instruction addition
-noisy_2way = flat_counts_2way + (noise_2way * sigma_2way)
-real_counts_2way.assign_vector(noisy_2way)
+# FIX 2: Wrap 2-way noise in Array too
+noise_2way_vec = get_gaussian_value(size=total_2way_elements)
+noise_2way = Array.create_from(noise_2way_vec)
+
+@for_range_opt(num_genes)
+def _(i):
+    for k in range(4 * num_classes):
+        idx = (i * 4 * num_classes) + k
+        real_counts_2way[i][k] = real_counts_2way[i][k] + (sigma_2way * noise_2way[idx])
 
 stop_timer(400)
 
