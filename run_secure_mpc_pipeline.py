@@ -90,7 +90,7 @@ def validate_party_files(party_files):
     
     return num_features, num_classes, column_names, total_samples
 
-def run_secure_mpc_pipeline(party_files, output_path, epsilon=1.0, delta=1e-5,
+def run_secure_mpc_pipeline(party_files, output_path, epsilon=10.0, delta=1e-5,
                              mpspdz_path=None,
                              marginal_protocol='ppai_bin_msr',
                              deg_filtering=None, num_iters=10000):

@@ -4,19 +4,25 @@ from Compiler import ml
 from Compiler.library import vectorize
 sfix.set_precision(16, 40)
 
-############# Getting secret shares #############
+############# Getting hyperparameters #############
 
 num_patients_0 = int(program.args[1]) #951
 num_patients_1 = int(program.args[2]) #950
 num_genes = int(program.args[3]) #958
 num_classes = int(program.args[4]) #5
 sigma_int = int(program.args[5])
-sigma_bin_int = 15000 # int(program.args[6])
+sigma_bin_int = int(program.args[6])
+upper_bound_input = int(program.args[7]) # 15
+
+UPPER_BOUND = cfix(upper_bound_input)
+LOWER_BOUND = cfix(0)
+RANGE_WIDTH = UPPER_BOUND - LOWER_BOUND
 
 target_delta = 1e-5
 num_data_custodians = 2
 qtls = [0.25, 0.5, 0.75]
 
+############# Getting secret shares #############
 data_0 = sfix.Matrix(num_patients_0, num_genes+1)
 data_1 = sfix.Matrix(num_patients_1, num_genes+1)
 N = num_patients_0 + num_patients_1
@@ -55,7 +61,18 @@ def get_gaussian_value():
     return sum_u - 6
 
 def bin_column_vectorized(gene_col, n):
-    """Vectorized binning operating on the whole N-sized array at once."""
+    """
+    Vectorized binning with DP Clipping and Fixed Denominator Strategy.
+    """
+    # --- 1. SECURE CLIPPING ---
+    # We must ensure values are within bounds to satisfy Differential Privacy.
+    # If val < -5, replace with -5. If val > 5, replace with 5.
+    clipped_col = (gene_col < LOWER_BOUND).if_else(LOWER_BOUND, gene_col)
+    clipped_col = (clipped_col > UPPER_BOUND).if_else(UPPER_BOUND, clipped_col)
+
+    # --- 2. QUANTILE LOGIC (Unchanged) ---
+    # Note: We use the original 'gene_col' for sorting/quantiles to preserve rank info,
+    # but we use 'clipped_col' for the actual sum calculation later.
     gene1_q = Array.create_from(gene_col)
     gene1_q.sort()
     
@@ -79,32 +96,36 @@ def bin_column_vectorized(gene_col, n):
     c2 = (gene_col < Q[2])
     binned_gene = 3 - c2 - c1 - c0
 
-    mean = sfix.Array(4)
+    # --- 3. DP NOISY SUM & FIXED MEAN ---
+    mean_output = sfix.Array(4)
     
-    # Generate noise and recover sigma float
+    # We only need 4 noise values (one for each bin's sum)
     noise_array = get_gaussian_value(size=4)
-    sigma_bin_val = sfix(sigma_bin_int) / sfix(10000.0)
+    
+    # Recover sigma float
+    sigma_bin_val = cfix(sigma_bin_int) / 10000.0
+ 
+    # Public Expected Count (Fixed Denominator)
+    # Since we enforce 4 bins on N patients, each bin 'should' have N/4 items.
+    expected_count = sfix(n) / sfix(4)
 
     for b in range(4):
-        # 1. Get indicator vector for this bin
+        # Indicator vector
         c_vec = (binned_gene == b)
         
-        # 2. Calculate exact sum and count
-        exact_count = sum(c_vec)
-        exact_sum = sum(c_vec * gene_col)
+        # Calculate Exact Sum using the CLIPPED data
+        # Note: We do not calculate 'exact_count' anymore.
+        exact_sum = sum(c_vec * clipped_col)
         
-        # 3. Prevent division by zero securely in MPC!
-        # If exact_count is 0, (exact_count == 0) evaluates to 1.
-        # So safe_count becomes 1. exact_sum is 0. 0/1 = 0 (Safe!).
-        safe_count = exact_count + (exact_count == 0)
+        # Add Noise to Sum
+        # Noise Scale = Sigma * Sensitivity (Range Width)
+        noise_scaled = sigma_bin_val * RANGE_WIDTH * noise_array[b]
+        noisy_sum = exact_sum + noise_scaled
         
-        # 4. Secure division
-        exact_mean = exact_sum / safe_count
-        
-        # 5. Apply DP noise directly to the mean
-        mean[b] = exact_mean + (sigma_bin_val * noise_array[b])
+        # Divide by Public Constant
+        mean_output[b] = noisy_sum / expected_count
 
-    return binned_gene, mean
+    return binned_gene, mean_output
 
 ############# STEP 1: BINNING (SECRET) #############
 start_timer(200)
@@ -170,7 +191,7 @@ stop_timer(300)
 start_timer(400)
 print_ln('Adding DP noise...')
 
-sigma = sfix(sigma_int) / sfix(10000.0)
+sigma = cfix(sigma_int) / 10000.0
 
 # 1-way marginals noise
 # Call the vectorized function with the required sizes

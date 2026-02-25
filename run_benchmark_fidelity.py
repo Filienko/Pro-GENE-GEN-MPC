@@ -154,7 +154,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, feature_sizes=[100,
                     output_path=synth_out_path,
                     epsilon=10.0,
                     delta=1e-5,
-                    marginal_protocol='ppai_bin_msr',
+                    marginal_protocol='ppai_bin_dp_msr',
                     mpspdz_path=mpspdz_path,
                 )
             except Exception as e:
