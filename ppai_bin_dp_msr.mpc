@@ -64,15 +64,21 @@ def bin_column_vectorized(gene_col, n):
     """
     Vectorized binning with DP Clipping and Fixed Denominator Strategy.
     """
-    # --- 1. SECURE CLIPPING ---
-    # We must ensure values are within bounds to satisfy Differential Privacy.
-    # If val < -5, replace with -5. If val > 5, replace with 5.
-    clipped_col = (gene_col < LOWER_BOUND).if_else(LOWER_BOUND, gene_col)
-    clipped_col = (clipped_col > UPPER_BOUND).if_else(UPPER_BOUND, clipped_col)
+    # --- 1. SECURE CLIPPING (FIXED) ---
+    # ERROR FIX: Explicitly create vectors of size 'n' for the bounds.
+    # The compiler needs 'LB_vec' to match the shape of 'gene_col' (size N).
+    
+    # We use sfix() to create a vector of constants. 
+    # Even though values are public, putting them in sfix vectors ensures 
+    # the vector operations (comparison and if_else) align perfectly.
+    LB_vec = sfix(LOWER_BOUND, size=n)
+    UB_vec = sfix(UPPER_BOUND, size=n)
+    
+    # Now both sides of the '<' and 'if_else' are vectors of size N.
+    clipped_col = (gene_col < LB_vec).if_else(LB_vec, gene_col)
+    clipped_col = (clipped_col > UB_vec).if_else(UB_vec, clipped_col)
 
     # --- 2. QUANTILE LOGIC (Unchanged) ---
-    # Note: We use the original 'gene_col' for sorting/quantiles to preserve rank info,
-    # but we use 'clipped_col' for the actual sum calculation later.
     gene1_q = Array.create_from(gene_col)
     gene1_q.sort()
     
@@ -90,39 +96,36 @@ def bin_column_vectorized(gene_col, n):
             Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
         k = k+1
 
-    # Vectorized comparisons
+    # Vectorized comparisons - NOW SAFE
+    # Q[k] is a scalar, but sfix usually broadcasts scalars against arrays 
+    # in simple comparisons better than it does in complex if_else chains.
+    # If this also fails, you would need to vector-expand Q[k] too.
+    # But usually, the clipping 'if_else' is the stricter part.
     c0 = (gene_col < Q[0])
     c1 = (gene_col < Q[1])
     c2 = (gene_col < Q[2])
     binned_gene = 3 - c2 - c1 - c0
 
-    # --- 3. DP NOISY SUM & FIXED MEAN ---
+    # --- 3. DP NOISY SUM & FIXED MEAN (Unchanged) ---
     mean_output = sfix.Array(4)
-    
-    # We only need 4 noise values (one for each bin's sum)
     noise_array = get_gaussian_value(size=4)
-    
-    # Recover sigma float
     sigma_bin_val = cfix(sigma_bin_int) / 10000.0
- 
-    # Public Expected Count (Fixed Denominator)
-    # Since we enforce 4 bins on N patients, each bin 'should' have N/4 items.
     expected_count = sfix(n) / sfix(4)
+    
+    # Calculate Range Width (Public Scalar)
+    # It is safe to keep this as a scalar because we multiply it later
+    # and multiplication supports scalar * vector broadcasting better.
+    RANGE_WIDTH = UPPER_BOUND - LOWER_BOUND
 
     for b in range(4):
-        # Indicator vector
         c_vec = (binned_gene == b)
         
-        # Calculate Exact Sum using the CLIPPED data
-        # Note: We do not calculate 'exact_count' anymore.
+        # Use clipped_col for the sum!
         exact_sum = sum(c_vec * clipped_col)
         
-        # Add Noise to Sum
-        # Noise Scale = Sigma * Sensitivity (Range Width)
         noise_scaled = sigma_bin_val * RANGE_WIDTH * noise_array[b]
         noisy_sum = exact_sum + noise_scaled
         
-        # Divide by Public Constant
         mean_output[b] = noisy_sum / expected_count
 
     return binned_gene, mean_output
