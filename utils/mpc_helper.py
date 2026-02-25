@@ -263,7 +263,7 @@ class MPCMarginalComputer:
     def compute_marginals_with_binning(self, party_data_files, num_genes,
                                        num_classes, target_delta, sigma, sigma_bin,
                                        deg_filtering=None, epsilon_topk=None, delta_topk=None,
-                                       protocol_name='ppai_bin_msr'):
+                                       protocol_name='ppai_bin_msr', max_val = 15.0):
         """
         Complete workflow: Pre-computes histograms, handles raw binning, or prepares log-binned integers.
         """
@@ -343,7 +343,6 @@ class MPCMarginalComputer:
                 # Bin 0: < 0.1 (Noise/Zero)
                 # Bins 1-3: Split [0.1, 15.0] equally
                 noise_floor = 0.1
-                max_val = 15.0
                 step = (max_val - noise_floor) / 3.0
                 thresholds = [noise_floor, noise_floor + step, noise_floor + 2*step]
                 
@@ -398,7 +397,7 @@ class MPCMarginalComputer:
         if protocol_name == 'deg_dp_pipeline':
             args = party_sizes + [num_genes, num_classes, deg_filtering, mpc_sigma_marginal_int, mpc_sigma_f_stat, sigma_bin_int]
         else:
-            args = party_sizes + [num_genes, num_classes, mpc_sigma_marginal_int, sigma_bin_int]
+            args = party_sizes + [num_genes, num_classes, mpc_sigma_marginal_int, sigma_bin_int, max_val]
 
         print(f"\nCompiling integrated MPC protocol: {protocol_name}...")
         self.executor.compile_protocol(protocol_name, args=args)
