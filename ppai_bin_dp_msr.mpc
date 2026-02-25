@@ -2,11 +2,7 @@ import math
 from Compiler import ml
 from Compiler.library import vectorize, for_range, for_range_opt
 
-# OPTIMIZATION: Precision
-# f=16 (fractional), k=33 (total).
-# Integer bits = 33 - 16 = 17 bits (Range +/- 65,536).
-# Fits '22264' comfortably.
-sfix.set_precision(16, 33)
+sfix.set_precision(12, 29)
 
 ############# Getting secret shares #############
 
@@ -14,8 +10,8 @@ num_patients_0 = int(program.args[1])
 num_patients_1 = int(program.args[2])
 num_genes = int(program.args[3])
 num_classes = int(program.args[4])
-sigma = sfix(program.args[5])
-sigma_bin = sfix(program.args[6])
+sigma = sfix(float(program.args[5]))
+sigma_bin = sfix(float(program.args[6]))
 
 target_delta = 1e-5
 qtls = [0.25, 0.5, 0.75]
