@@ -163,7 +163,7 @@ class SecureMPCPrivatePGM:
         # Get metadata
         num_genes = len([col for col in config.keys() if col != self.target_variable])
         num_classes = config[self.target_variable]
-        
+
         # Calculate total samples
         total_samples = sum(sum(1 for _ in open(filepath, 'r')) - 1 for filepath in party_data_files)
 
@@ -189,10 +189,10 @@ class SecureMPCPrivatePGM:
                 print(f"  Marginals: ε={self.epsilon_marginals:.3f}, δ={self.delta_marginals}")
             else:
                 # Guided by the realization that marginal selection does not matter as much, since even random features worked well. 
-                self.epsilon_binning = self.target_epsilon * 0.7
-                self.epsilon_marginals = self.target_epsilon * 0.3
-                self.delta_binning = self.target_delta * 0.7
-                self.delta_marginals = self.target_delta * 0.3
+                self.epsilon_binning = self.target_epsilon * 0.5
+                self.epsilon_marginals = self.target_epsilon * 0.5
+                self.delta_binning = self.target_delta * 0.5
+                self.delta_marginals = self.target_delta * 0.5
 
             if self.target_delta > 0:
                 # Calculate the smallest possible bin size
@@ -225,7 +225,8 @@ class SecureMPCPrivatePGM:
             deg_filtering=deg_filtering, # Pass DEG k
             epsilon_topk=eps_topk,       # Pass Top-K allocated epsilon
             delta_topk=delta_topk,        # Pass Top-K allocated delta
-            protocol_name=marginal_protocol
+            protocol_name=marginal_protocol,
+            max_val=max_gene_val
         )
         all_feature_names = [k for k in config.keys() if k != self.target_variable]
         

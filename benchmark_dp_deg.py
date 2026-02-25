@@ -57,11 +57,10 @@ class SecureDEGOrchestrator:
         self._prepare_inputs(df0, df1, n_classes)
         
         sigma = self._calculate_sigma(epsilon, delta)
-        sigma_int = int(sigma * 10000)
 
         # 2. Compile
         # Note: We cast args to str to pass to subprocess
-        compiler_args = [str(n0), str(n1), str(m_genes), str(n_classes), str(k), str(sigma_int)]
+        compiler_args = [str(n0), str(n1), str(m_genes), str(n_classes), str(k), str(sigma)]
         full_program_name = f"{self.protocol_name}-" + "-".join(compiler_args)
 
         print(f"   [Compiling] {full_program_name}...")

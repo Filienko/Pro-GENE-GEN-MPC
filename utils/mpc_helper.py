@@ -387,17 +387,19 @@ class MPCMarginalComputer:
             # --- STRATEGY C: STANDARD / DEG (Floats) ---
             else:
                 df_numeric = df[df.select_dtypes(include=['number']).columns.tolist()]
-                with open(input_file, 'w') as f:
-                    for row in df_numeric.values:
-                        f.write(' '.join([str(val) for val in row]) + '\n')
+                df_numeric = df_numeric.clip(upper=max_val)
+                df_numeric.to_csv(input_file, 
+                  sep=' ', 
+                  header=False, 
+                  index=False)
 
         # 2. CONSTRUCT ARGUMENTS DYNAMICALLY
         # Note: log_bin_marginals expects 5 args (N0, N1, Genes, Classes, Sigma)
         # We append sigma_bin_int (0) anyway; MP-SPDZ ignores extra args at the end.
         if protocol_name == 'deg_dp_pipeline':
-            args = party_sizes + [num_genes, num_classes, deg_filtering, mpc_sigma_marginal_int, mpc_sigma_f_stat, sigma_bin_int]
+            args = party_sizes + [num_genes, num_classes, deg_filtering, sigma, mpc_sigma_f_stat, sigma_bin]
         else:
-            args = party_sizes + [num_genes, num_classes, mpc_sigma_marginal_int, sigma_bin_int, max_val]
+            args = party_sizes + [num_genes, num_classes, sigma, sigma_bin]
 
         print(f"\nCompiling integrated MPC protocol: {protocol_name}...")
         self.executor.compile_protocol(protocol_name, args=args)

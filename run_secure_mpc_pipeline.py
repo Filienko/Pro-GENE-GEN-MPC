@@ -93,7 +93,7 @@ def validate_party_files(party_files):
 def run_secure_mpc_pipeline(party_files, output_path, epsilon=10.0, delta=1e-5,
                              mpspdz_path=None,
                              marginal_protocol='ppai_bin_msr',
-                             deg_filtering=None, num_iters=10000):
+                             deg_filtering=None, num_iters=10000, max_gene_val = 15, bin_num = 4):
     """
     Run the secure MPC pipeline with no data leakage
 
@@ -167,7 +167,9 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=10.0, delta=1e-5,
         config=config,
         marginal_protocol=marginal_protocol,
         num_iters=num_iters,
-        deg_filtering=deg_filtering
+        deg_filtering=deg_filtering,
+        max_gene_val = max_gene_val, 
+        bin_num = bin_num
     )
 
     # Generate synthetic data
