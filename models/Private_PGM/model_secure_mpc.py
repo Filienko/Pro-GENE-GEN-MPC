@@ -140,7 +140,7 @@ class SecureMPCPrivatePGM:
         return sigma
 
     def train_from_party_files(self, party_data_files, config,
-                                marginal_protocol='ppai_msr_noisy_final',
+                                marginal_protocol='ppai_msr_final',
                                 cliques=None, num_iters=10000, 
                                 deg_filtering=None, max_gene_val = 15, bin_num = 4):
         """
@@ -189,10 +189,10 @@ class SecureMPCPrivatePGM:
                 print(f"  Marginals: ε={self.epsilon_marginals:.3f}, δ={self.delta_marginals}")
             else:
                 # Guided by the realization that marginal selection does not matter as much, since even random features worked well. 
-                self.epsilon_binning = self.target_epsilon * 0.5
-                self.epsilon_marginals = self.target_epsilon * 0.5
-                self.delta_binning = self.target_delta * 0.5
-                self.delta_marginals = self.target_delta * 0.5
+                self.epsilon_binning = self.target_epsilon * 0
+                self.epsilon_marginals = self.target_epsilon * 1.0
+                self.delta_binning = self.target_delta * 0
+                self.delta_marginals = self.target_delta * 1.0
 
             if self.target_delta > 0:
                 # Calculate the smallest possible bin size
@@ -203,7 +203,8 @@ class SecureMPCPrivatePGM:
                 # Calculate the L2 sensitivity of the means
                 # How much one patient can change the mean * sqrt(number of genes)
                 l2_sensitivity_mean = (max_gene_val / bin_size) * math.sqrt(num_genes)                
-                sigma_bin = self.moments_calibration(l2_sensitivity_mean, 1e-9, self.epsilon_binning, self.delta_binning)
+                # sigma_bin = self.moments_calibration(l2_sensitivity_mean, 1e-9, self.epsilon_binning, self.delta_binning)
+                sigma_bin = 0.0  # Following PRO-GENE-GEN we do not privatize the bins
                 sigma_marginal = self.moments_calibration(1.0, 1.0, self.epsilon_marginals, self.delta_marginals)
             else:
                 sigma_bin = 1.0 / num_genes / 2.0

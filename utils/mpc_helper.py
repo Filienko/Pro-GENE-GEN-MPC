@@ -271,7 +271,6 @@ class MPCMarginalComputer:
         
         # Initialize variables
         mpc_sigma_f_stat = 0
-        sigma_bin_int = 0
         
         # 1. BRANCH LOGIC: Select Strategy
         if protocol_name == 'histogram_marginals':
@@ -387,7 +386,6 @@ class MPCMarginalComputer:
             # --- STRATEGY C: STANDARD / DEG (Floats) ---
             else:
                 df_numeric = df[df.select_dtypes(include=['number']).columns.tolist()]
-                df_numeric = df_numeric.clip(upper=max_val)
                 df_numeric.to_csv(input_file, 
                   sep=' ', 
                   header=False, 
