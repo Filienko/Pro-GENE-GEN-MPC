@@ -187,7 +187,9 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
 
     y = df[label_column]
     X = df.drop(columns=[label_column])
-    
+    # subset_features = X.sample(n=5, axis=1).columns
+    # X = X[subset_features].copy()
+
     n_total_features = X.shape[1]
     print(f"Dataset loaded. Total genes/features to use: {n_total_features}")
 
@@ -241,7 +243,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                         output_path=synth_out_path,
                         epsilon=current_eps,      
                         delta=1e-5,
-                        marginal_protocol='ppai_bin_msr',
+                        marginal_protocol='ppai_bin_wo_dp_msr_opt',
                         mpspdz_path=mpspdz_path,
                         mpc_protocol=current_protocol
                     )
@@ -391,8 +393,8 @@ if __name__ == "__main__":
     parser.add_argument('--label', type=str, required=True)
     parser.add_argument('--mpspdz', type=str, required=True)
     parser.add_argument('--runs', type=int, default=3, help='Number of DP estimation runs to average')
-    parser.add_argument('--protocols', nargs='+', default=['ring', 'malicious-rep-ring'], help='List of MP-SPDZ protocols to test')
-    parser.add_argument('--epsilons', nargs='+', type=float, default=[1.0, 10.0, 100.0, 1000.0], help='List of Epsilon values to test')
+    parser.add_argument('--protocols', nargs='+', default=['ring', 'mal-rep-ring'], help='List of MP-SPDZ protocols to test')
+    parser.add_argument('--epsilons', nargs='+', type=float, default=[1.0, 2.0, 5.0, 7.0, 10.0, 100.0], help='List of Epsilon values to test')
     
     args = parser.parse_args()
 

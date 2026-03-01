@@ -187,7 +187,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
     X = df.drop(columns=[label_column])
 
     results = []
-    raw_log_file = "benchmark_fidelity_RAW_log.csv"
+    raw_log_file = "benchmark_fidelity_RAW_log_1.csv"
 
     for n_features in feature_sizes:
         for current_protocol in protocols:
@@ -220,9 +220,9 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 print(f"--- Computing real-data baseline for this split ---")
                 base_acc, base_f1 = compute_baseline_metrics(train_df, test_df)
                 
-                party1_path = f"tmp_p1_feat{n_features_to_use}_{current_protocol}_run{run_id}.csv"
-                party2_path = f"tmp_p2_feat{n_features_to_use}_{current_protocol}_run{run_id}.csv"
-                synth_out_path = f"tmp_synthetic_feat{n_features_to_use}_{current_protocol}_run{run_id}.csv"
+                party1_path = f"tmp_p1_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
+                party2_path = f"tmp_p2_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
+                synth_out_path = f"tmp_synthetic_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
 
                 mpc_helper.MPC_METRICS = {
                     'compile_time': 0.0, 'execute_time': 0.0, 'data_sent_mb': 0.0,
@@ -238,7 +238,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                         output_path=synth_out_path,
                         epsilon=10.0,
                         delta=1e-5,
-                        marginal_protocol='ppai_bin_msr',
+                        marginal_protocol='ppai_bin_wo_dp_msr_opt',
                         mpspdz_path=mpspdz_path,
                         mpc_protocol=current_protocol
                     )
@@ -374,7 +374,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
     for current_protocol in protocols:
         protocol_df = results_df[results_df['protocol'] == current_protocol]
         if not protocol_df.empty:
-            out_filename = f"benchmark_fidelity_avg_{current_protocol}.csv"
+            out_filename = f"benchmark_fidelity_avg_{current_protocol}_opt.csv"
             protocol_df.to_csv(out_filename, index=False)
             print(f"✓ Averaged results for {current_protocol} saved to: {out_filename}")
             
@@ -386,7 +386,7 @@ if __name__ == "__main__":
     parser.add_argument('--label', type=str, required=True)
     parser.add_argument('--mpspdz', type=str, required=True)
     parser.add_argument('--runs', type=int, default=3, help='Number of DP estimation runs to average')
-    parser.add_argument('--protocols', nargs='+', default=['ring', 'malicious-rep-ring'], help='List of MP-SPDZ protocols to test')
+    parser.add_argument('--protocols', nargs='+', default=['ring', 'mal-rep-ring'], help='List of MP-SPDZ protocols to test')
     args = parser.parse_args()
 
     run_benchmark(
@@ -394,6 +394,6 @@ if __name__ == "__main__":
         label_column=args.label, 
         mpspdz_path=args.mpspdz, 
         protocols=args.protocols,
-        feature_sizes=[100, 200, 400, 600, 800, 1000],
+        feature_sizes=[100, 200, 500, 800, 1000],
         n_runs=args.runs
     )

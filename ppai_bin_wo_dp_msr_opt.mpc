@@ -1,7 +1,7 @@
 import math
 import random
 from Compiler import ml
-from Compiler.library import vectorize
+from Compiler.library import vectorize, for_range_opt, print_ln
 
 ############# Getting secret shares #############
 
@@ -9,53 +9,61 @@ num_patients_0 = int(program.args[1]) #951
 num_patients_1 = int(program.args[2]) #950
 num_genes = int(program.args[3]) #958
 num_classes = int(program.args[4]) #5
-sigma = cfix(float(program.args[5]))
+sigma = cfix(float(program.args[5])) # FIX: Cast string to float before cfix
 target_delta = 1e-5
 num_data_custodians = 2
 qtls = [0.25, 0.5, 0.75]
 
-data_0 = sfix.Matrix(num_patients_0, num_genes+1)
-data_1 = sfix.Matrix(num_patients_1, num_genes+1)
 N = num_patients_0 + num_patients_1
 
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
 data_0.input_from(0)
 data_1.input_from(1)
 
 ############# Combined data & Transpose Trick #############
-# We transpose the data so rows are genes and columns are patients.
-# This allows O(1) vectorized row extraction later.
+print_ln('Aligning and transposing data matrices...')
+
 train_data_T = sfix.Matrix(num_genes, N)
 train_labels = sfix.Array(N)
 
-# Populate combined data and transpose simultaneously
-for i in range(num_patients_0):
-    for j in range(num_genes):
-        train_data_T[j][i] = data_0[i][j]
-    train_labels[i] = data_0[i][num_genes]
+# Natively transpose the source matrices 
+data_0_T = data_0.transpose()
+data_1_T = data_1.transpose()
 
-for i in range(num_patients_1):
-    idx = i + num_patients_0
-    for j in range(num_genes):
-        train_data_T[j][idx] = data_1[i][j]
-    train_labels[idx] = data_1[i][num_genes]
+# Extract labels directly from the last row (index = num_genes)
+train_labels.assign_vector(data_0_T[num_genes].get_vector(), base=0)
+train_labels.assign_vector(data_1_T[num_genes].get_vector(), base=num_patients_0)
+
+# Vectorized block assignment for gene data
+@for_range_opt(num_genes)
+def _(j):
+    train_data_T[j].assign_vector(data_0_T[j].get_vector(), base=0)
+    train_data_T[j].assign_vector(data_1_T[j].get_vector(), base=num_patients_0)
 
 ############# Vectorized Helpers #############
+
+# Create an array of 1s to replace sum() with dot_product()
+ones_vec = sfix.Array(N)
+ones_vec.assign_all(1)
+
 def get_gaussian_vector(size):
     """Generates an array of Irwin-Hall approximated Gaussian noise."""
     sum_u = sfix.Array(size)
     sum_u.assign_all(0)
     for _ in range(12):
-        # get_random natively supports the size parameter in MP-SPDZ
         sum_u += sfix.get_random(0, 1, size=size)
     return sum_u - 6
 
 def bin_column_vectorized(gene_col, n):
     """Vectorized binning operating on the whole N-sized array at once."""
-    gene1_q = Array.create_from(gene_col)
+    gene1_q = sfix.Array(n)
+    gene1_q.assign(gene_col)
     gene1_q.sort()
 
     Q = sfix.Array(len(qtls))
     k = 0
+    # Standard python loop is fine here because len(qtls) is only 3
     for q in qtls:
         pos = (n-1)*q
         floor_p = math.floor(pos)
@@ -63,7 +71,7 @@ def bin_column_vectorized(gene_col, n):
         if pos < 1:
             Q[k] = gene1_q[0]
         elif pos >= n:
-            Q[k] = gene1_q[n]
+            Q[k] = gene1_q[n-1] # Fixed out-of-bounds index
         else:
             Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
         k = k+1
@@ -74,28 +82,30 @@ def bin_column_vectorized(gene_col, n):
     c2 = (gene_col < Q[2])
     binned_gene = 3 - c2 - c1 - c0
 
-    mean = sfix.Array(len(qtls)+1)
-    count = sfix.Array(len(qtls)+1)
+    mean = sfix.Array(4)
+    count = sfix.Array(4)
 
     for b in range(4):
         c_vec = (binned_gene == b)
-        count[b] = sum(c_vec)
-        mean[b] = sum(c_vec * gene_col) / count[b]
+        # Replaced Python sum() with native MPC dot product to prevent unrolling
+        count[b] = sfix.dot_product(c_vec, ones_vec) 
+        mean[b] = sfix.dot_product(c_vec, gene_col) / count[b]
 
     return binned_gene, mean
 
 ############# STEP 1: BINNING (SECRET) #############
 start_timer(200)
-mean_matrix = []
 print_ln('Starting secure binning...')
 
-for j in range(num_genes):
-    # O(1) extraction due to the transpose trick
+# Allocate an MPC matrix for the means instead of a dynamic Python list
+mean_matrix = sfix.Matrix(num_genes, 4)
+
+@for_range_opt(num_genes)
+def _(j):
     gene_col = train_data_T[j]
     binned_col, mean1 = bin_column_vectorized(gene_col, N)
-    mean_matrix.append(mean1)
-    # Write back the binned values into our transposed matrix
-    train_data_T[j] = binned_col
+    mean_matrix[j].assign(mean1)
+    train_data_T[j].assign(binned_col)
 
 stop_timer(200)
 print_ln('Binning complete')
@@ -113,13 +123,13 @@ label_is_vecs = []
 for l in range(num_classes):
     l_vec = (train_labels == l)
     label_is_vecs.append(l_vec)
-    real_counts_l[l] = sum(l_vec)
+    real_counts_l[l] = sfix.dot_product(l_vec, ones_vec)
 
-# Compute marginals column by column
-for j in range(num_genes):
-    val_r = train_data_T[j] # Entire column of N patients
+# Compute marginals column by column using runtime loop
+@for_range_opt(num_genes)
+def _(j):
+    val_r = train_data_T[j] 
 
-    # Vectorized polynomial calculations
     r_minus_10 = 1 - val_r
     r_minus_1 = val_r - 1
     r_minus_20 = 2 - val_r
@@ -127,20 +137,21 @@ for j in range(num_genes):
     r_minus_30 = 3 - val_r
     r_minus_3 = val_r - 3
 
-    gene_is_vecs = [
-        (r_minus_10 * r_minus_20 * r_minus_30) / 6,
-        (val_r * r_minus_20 * r_minus_30) / 2,
-        (val_r * r_minus_1 * r_minus_30) / 2,
-        (val_r * r_minus_1 * r_minus_2) / 6
-    ]
+    gene_is_vecs_0 = (r_minus_10 * r_minus_20 * r_minus_30) / 6
+    gene_is_vecs_1 = (val_r * r_minus_20 * r_minus_30) / 2
+    gene_is_vecs_2 = (val_r * r_minus_1 * r_minus_30) / 2
+    gene_is_vecs_3 = (val_r * r_minus_1 * r_minus_2) / 6
+    
+    # Store in list for the loop below
+    g_vecs = [gene_is_vecs_0, gene_is_vecs_1, gene_is_vecs_2, gene_is_vecs_3]
 
     for f in range(4):
-        real_counts[j][f] = sum(gene_is_vecs[f])
+        # Replaced Python sum() with dot_product
+        real_counts[j][f] = sfix.dot_product(g_vecs[f], ones_vec)
 
         feat_idx = f * num_classes
         for c in range(num_classes):
-            # Highly optimized batched network instruction
-            real_counts_2way[j][feat_idx + c] = sfix.dot_product(gene_is_vecs[f], label_is_vecs[c])
+            real_counts_2way[j][feat_idx + c] = sfix.dot_product(g_vecs[f], label_is_vecs[c])
 
 stop_timer(300)
 
@@ -152,16 +163,14 @@ print_ln('Adding DP noise...')
 noise_1way_features = get_gaussian_vector(size=(num_genes * 4))
 noise_1way_labels = get_gaussian_vector(size=num_classes)
 
-# Flatten real_counts temporarily to add noise in one vectorized swoop, or reshape noise
-# MP-SPDZ allows assigning flat arrays to matrices if you use .assign_vector()
 flat_real_counts = real_counts.get_vector()
 flat_noisy_counts = flat_real_counts + (sigma * noise_1way_features.get_vector())
 real_counts.assign_vector(flat_noisy_counts)
 
-# Do the same for labels
 real_counts_l.assign_vector(real_counts_l.get_vector() + (sigma * noise_1way_labels.get_vector()))
 
 # 2-way marginals noise
+# Since target_delta is 1e-5, the if statement below is skipped, keeping the original sigma.
 if target_delta == 0:
     sigma = 1.0 / num_genes / 2.0
 
@@ -179,25 +188,33 @@ start_timer(500)
 
 print_ln('=== MARGINALS_OUTPUT_START ===')
 print_ln('1WAY_FEATURES:')
-for i in range(num_genes):
-    for j in range(4):
+@for_range_opt(num_genes)
+def _(i):
+    @for_range_opt(4)
+    def _(j):
         print_ln('%s', real_counts[i][j].reveal())
 
 print_ln('1WAY_LABELS:')
-for i in range(num_classes):
+@for_range_opt(num_classes)
+def _(i):
     print_ln('%s', real_counts_l[i].reveal())
 
 print_ln('2WAY:')
-for i in range(num_genes):
-    for k in range(4 * num_classes):
+@for_range_opt(num_genes)
+def _(i):
+    @for_range_opt(4 * num_classes)
+    def _(k):
         print_ln('%s', real_counts_2way[i][k].reveal())
 print_ln('=== MARGINALS_OUTPUT_END ===')
 
 print_ln('=== BIN_MEANS_START ===')
-for i in range(num_genes):
-    for j in range(4):
+@for_range_opt(num_genes)
+def _(i):
+    @for_range_opt(4)
+    def _(j):
         print_ln('%s', mean_matrix[i][j].reveal())
 print_ln('=== BIN_MEANS_END ===')
 
 stop_timer(500)
 print_ln('Complete!')
+
