@@ -93,7 +93,8 @@ def validate_party_files(party_files):
 def run_secure_mpc_pipeline(party_files, output_path, epsilon=10.0, delta=1e-5,
                              mpspdz_path=None,
                              marginal_protocol='ppai_bin_msr',
-                             deg_filtering=None, num_iters=10000, max_gene_val = 15, bin_num = 4, mpc_protocol='ring'):
+                             deg_filtering=None, num_iters=10000, max_gene_val=15, bin_num=4,
+                             mpc_protocol='ring', port=None):
     """
     Run the secure MPC pipeline with no data leakage
 
@@ -151,7 +152,8 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=10.0, delta=1e-5,
         target_delta=delta,
         mpspdz_path=mpspdz_path,
         mpc_protocol=mpc_protocol,
-        num_parties=len(party_files)
+        num_parties=len(party_files),
+        port=port
     )
 
     # Train model (all operations in MPC)

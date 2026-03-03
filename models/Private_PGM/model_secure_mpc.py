@@ -47,7 +47,7 @@ class SecureMPCPrivatePGM:
     """
 
     def __init__(self, target_variable, enable_privacy, target_epsilon, target_delta,
-                 mpspdz_path=None, mpc_protocol="ring", num_parties=2):
+                 mpspdz_path=None, mpc_protocol="ring", num_parties=2, port=None):
         """
         Initialize Secure MPC Private PGM model
 
@@ -59,6 +59,8 @@ class SecureMPCPrivatePGM:
             mpspdz_path: Path to MP-SPDZ installation (required)
             mpc_protocol: MPC protocol to use (default: ring)
             num_parties: Number of data custodian parties (default: 2)
+            port: Base port number for MP-SPDZ parties (None = use default 5000).
+                  Set to a unique value per concurrent instance to avoid port conflicts.
         """
         self.target_epsilon = target_epsilon
         self.enable_privacy = enable_privacy
@@ -81,12 +83,14 @@ class SecureMPCPrivatePGM:
 
         self.mpc_binner = MPCBinningComputer(
             mpspdz_path=self.mpspdz_path,
-            protocol=self.mpc_protocol
+            protocol=self.mpc_protocol,
+            port=port
         )
 
         self.mpc_computer = MPCMarginalComputer(
             mpspdz_path=self.mpspdz_path,
-            protocol=self.mpc_protocol
+            protocol=self.mpc_protocol,
+            port=port
         )
 
         # Privacy budget allocation

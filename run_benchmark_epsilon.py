@@ -169,7 +169,7 @@ def compute_baseline_metrics(train_df, test_df):
 # MAIN BENCHMARK PIPELINE
 # ==========================================
 
-def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons, n_runs=1, prefix=""):
+def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons, n_runs=1, prefix="", port=None):
     print(f"Loading full dataset from {full_data_path}...")
     df = pd.read_csv(full_data_path)
 
@@ -239,11 +239,12 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                     synth_df = run_secure_mpc_pipeline(
                         party_files=[party1_path, party2_path],
                         output_path=synth_out_path,
-                        epsilon=current_eps,      
+                        epsilon=current_eps,
                         delta=1e-5,
                         marginal_protocol='ppai_bin_wo_dp_msr_opt',
                         mpspdz_path=mpspdz_path,
-                        mpc_protocol=current_protocol
+                        mpc_protocol=current_protocol,
+                        port=port
                     )
                     
                     print(f"--- Evaluating Downstream Utility & Fidelity ---")
@@ -394,6 +395,9 @@ if __name__ == "__main__":
     parser.add_argument('--protocols', nargs='+', default=['ring', 'mal-rep-ring'], help='List of MP-SPDZ protocols to test')
     parser.add_argument('--epsilons', nargs='+', type=float, default=[1.0, 2.0, 5.0, 7.0, 10.0, 100.0], help='List of Epsilon values to test')
     parser.add_argument('--prefix', type=str, default='', help='Prefix for all output filenames (enables concurrent runs)')
+    parser.add_argument('--port', type=int, default=None,
+                        help='Base port for MP-SPDZ parties (-pn flag). Set to a unique value '
+                             'per concurrent run (e.g. 5000, 5100, 5200) to avoid port conflicts.')
 
     args = parser.parse_args()
 
@@ -404,5 +408,6 @@ if __name__ == "__main__":
         protocols=args.protocols,
         epsilons=args.epsilons,
         n_runs=args.runs,
-        prefix=args.prefix
+        prefix=args.prefix,
+        port=args.port
     )
