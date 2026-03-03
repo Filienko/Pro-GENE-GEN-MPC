@@ -169,7 +169,7 @@ def compute_baseline_metrics(train_df, test_df):
 # MAIN BENCHMARK PIPELINE
 # ==========================================
 
-def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons, n_runs=1):
+def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons, n_runs=1, prefix=""):
     print(f"Loading full dataset from {full_data_path}...")
     df = pd.read_csv(full_data_path)
 
@@ -187,14 +187,12 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
 
     y = df[label_column]
     X = df.drop(columns=[label_column])
-    # subset_features = X.sample(n=5, axis=1).columns
-    # X = X[subset_features].copy()
 
     n_total_features = X.shape[1]
     print(f"Dataset loaded. Total genes/features to use: {n_total_features}")
 
     results = []
-    raw_log_file = "benchmark_epsilon_RAW_log.csv"
+    raw_log_file = f"{prefix}benchmark_epsilon_RAW_log.csv"
 
     for current_protocol in protocols:
         for current_eps in epsilons:
@@ -224,9 +222,9 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                 print(f"--- Computing real-data baseline for this split ---")
                 base_acc, base_f1 = compute_baseline_metrics(train_df, test_df)
                 
-                party1_path = f"tmp_p1_eps{current_eps}_{current_protocol}_run{run_id}.csv"
-                party2_path = f"tmp_p2_eps{current_eps}_{current_protocol}_run{run_id}.csv"
-                synth_out_path = f"tmp_synthetic_eps{current_eps}_{current_protocol}_run{run_id}.csv"
+                party1_path = f"{prefix}tmp_p1_eps{current_eps}_{current_protocol}_run{run_id}.csv"
+                party2_path = f"{prefix}tmp_p2_eps{current_eps}_{current_protocol}_run{run_id}.csv"
+                synth_out_path = f"{prefix}tmp_synthetic_eps{current_eps}_{current_protocol}_run{run_id}.csv"
 
                 mpc_helper.MPC_METRICS = {
                     'compile_time': 0.0, 'execute_time': 0.0, 'data_sent_mb': 0.0,
@@ -381,10 +379,10 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
     for current_protocol in protocols:
         protocol_df = results_df[results_df['protocol'] == current_protocol]
         if not protocol_df.empty:
-            out_filename = f"benchmark_epsilon_avg_{current_protocol}.csv"
+            out_filename = f"{prefix}benchmark_epsilon_avg_{current_protocol}.csv"
             protocol_df.to_csv(out_filename, index=False)
             print(f"✓ Averaged results for {current_protocol} saved to: {out_filename}")
-            
+
     print(f"✓ Raw un-averaged results with all intermediate runs safely preserved in: {raw_log_file}")
 
 if __name__ == "__main__":
@@ -395,14 +393,16 @@ if __name__ == "__main__":
     parser.add_argument('--runs', type=int, default=3, help='Number of DP estimation runs to average')
     parser.add_argument('--protocols', nargs='+', default=['ring', 'mal-rep-ring'], help='List of MP-SPDZ protocols to test')
     parser.add_argument('--epsilons', nargs='+', type=float, default=[1.0, 2.0, 5.0, 7.0, 10.0, 100.0], help='List of Epsilon values to test')
-    
+    parser.add_argument('--prefix', type=str, default='', help='Prefix for all output filenames (enables concurrent runs)')
+
     args = parser.parse_args()
 
     run_benchmark(
-        full_data_path=args.data, 
-        label_column=args.label, 
-        mpspdz_path=args.mpspdz, 
+        full_data_path=args.data,
+        label_column=args.label,
+        mpspdz_path=args.mpspdz,
         protocols=args.protocols,
         epsilons=args.epsilons,
-        n_runs=args.runs
+        n_runs=args.runs,
+        prefix=args.prefix
     )

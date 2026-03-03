@@ -168,7 +168,7 @@ def compute_baseline_metrics(train_df, test_df):
 # MAIN BENCHMARK PIPELINE
 # ==========================================
 
-def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_sizes, n_runs=1):
+def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_sizes, n_runs=1, prefix=""):
     print(f"Loading full dataset from {full_data_path}...")
     df = pd.read_csv(full_data_path)
 
@@ -187,7 +187,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
     X = df.drop(columns=[label_column])
 
     results = []
-    raw_log_file = "benchmark_fidelity_RAW_log_1.csv"
+    raw_log_file = f"{prefix}benchmark_fidelity_RAW_log.csv"
 
     for n_features in feature_sizes:
         for current_protocol in protocols:
@@ -220,9 +220,9 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 print(f"--- Computing real-data baseline for this split ---")
                 base_acc, base_f1 = compute_baseline_metrics(train_df, test_df)
                 
-                party1_path = f"tmp_p1_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
-                party2_path = f"tmp_p2_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
-                synth_out_path = f"tmp_synthetic_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
+                party1_path = f"{prefix}tmp_p1_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
+                party2_path = f"{prefix}tmp_p2_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
+                synth_out_path = f"{prefix}tmp_synthetic_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
 
                 mpc_helper.MPC_METRICS = {
                     'compile_time': 0.0, 'execute_time': 0.0, 'data_sent_mb': 0.0,
@@ -374,10 +374,10 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
     for current_protocol in protocols:
         protocol_df = results_df[results_df['protocol'] == current_protocol]
         if not protocol_df.empty:
-            out_filename = f"benchmark_fidelity_avg_{current_protocol}_opt.csv"
+            out_filename = f"{prefix}benchmark_fidelity_avg_{current_protocol}_opt.csv"
             protocol_df.to_csv(out_filename, index=False)
             print(f"✓ Averaged results for {current_protocol} saved to: {out_filename}")
-            
+
     print(f"✓ Raw un-averaged results with all intermediate runs safely preserved in: {raw_log_file}")
 
 if __name__ == "__main__":
@@ -387,13 +387,15 @@ if __name__ == "__main__":
     parser.add_argument('--mpspdz', type=str, required=True)
     parser.add_argument('--runs', type=int, default=3, help='Number of DP estimation runs to average')
     parser.add_argument('--protocols', nargs='+', default=['ring', 'mal-rep-ring'], help='List of MP-SPDZ protocols to test')
+    parser.add_argument('--prefix', type=str, default='', help='Prefix for all output filenames (enables concurrent runs)')
     args = parser.parse_args()
 
     run_benchmark(
-        full_data_path=args.data, 
-        label_column=args.label, 
-        mpspdz_path=args.mpspdz, 
+        full_data_path=args.data,
+        label_column=args.label,
+        mpspdz_path=args.mpspdz,
         protocols=args.protocols,
         feature_sizes=[100, 200, 500, 800, 1000],
-        n_runs=args.runs
+        n_runs=args.runs,
+        prefix=args.prefix
     )
