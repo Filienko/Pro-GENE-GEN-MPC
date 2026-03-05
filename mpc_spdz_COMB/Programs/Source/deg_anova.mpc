@@ -1,0 +1,159 @@
+# MP-SPDZ Compiler Directives
+program.use_trunc_pr = True
+program.use_split(3)
+
+from Compiler import library
+from Compiler.types import sfix, sint, cint, cfix, MemValue
+from Compiler.library import for_range_opt, for_range, print_ln, if_
+
+print_ln(">> MPC Starting: Parsing arguments...")
+
+n0 = int(program.args[1])
+n1 = int(program.args[2])
+total_n = n0 + n1
+m_genes = int(program.args[3])
+n_classes = int(program.args[4])
+k = int(program.args[5])
+
+print_ln(">> Expected Inputs: N0=%s, N1=%s, Genes=%s, Classes=%s", n0, n1, m_genes, n_classes)
+
+X = sfix.Matrix(total_n, m_genes)
+Y = sfix.Matrix(total_n, n_classes)
+
+# ---------------------------------------------------------
+# PHASE 1: LOAD DATA
+# ---------------------------------------------------------
+print_ln(">> Phase 1: Loading data from Party 0...")
+@for_range_opt(n0)
+def _(i):
+    @for_range_opt(m_genes)
+    def _(j):
+        X[i][j] = sfix.get_input_from(0)
+    @for_range_opt(n_classes)
+    def _(c):
+        Y[i][c] = sfix.get_input_from(0)
+
+print_ln(">> Phase 1: Loading data from Party 1...")
+@for_range_opt(n1)
+def _(i):
+    row_idx = n0 + i
+    @for_range_opt(m_genes)
+    def _(j):
+        X[row_idx][j] = sfix.get_input_from(1)
+    @for_range_opt(n_classes)
+    def _(c):
+        Y[row_idx][c] = sfix.get_input_from(1)
+
+print_ln(">> Phase 1 Complete. All inputs loaded.")
+
+# ---------------------------------------------------------
+# PHASE 2: COMPUTE CLASS SUMS AND MEANS (Matrix Optimized)
+# ---------------------------------------------------------
+class_counts = sfix.Array(n_classes)
+class_counts.assign_all(0)
+
+print_ln(">> Phase 2: Computing secure sums and means via Matrix Math...")
+
+Y_T = sfix.Matrix(n_classes, total_n)
+@for_range_opt(total_n)
+def _(i):
+    @for_range_opt(n_classes)
+    def _(c):
+        is_class = Y[i][c]
+        Y_T[c][i] = is_class
+        class_counts[c] = class_counts[c] + is_class
+
+class_sums = Y_T.dot(X)
+class_means = sfix.Matrix(n_classes, m_genes)
+
+@for_range_opt(n_classes)
+def _(c):
+    is_empty = (class_counts[c] == 0)
+    safe_count = class_counts[c] + is_empty # If 0, becomes 1 to prevent div-by-zero
+    inv_count = (1.0 / safe_count) * (1 - is_empty) # If 0, mean becomes 0
+    
+    @for_range_opt(m_genes)
+    def _(j):
+        class_means[c][j] = class_sums[c][j] * inv_count
+
+print_ln(">> Phase 2 Complete.")
+
+# ---------------------------------------------------------
+# PHASE 3: COMPUTE F-STATISTICS (Batched Vectorized Division)
+# ---------------------------------------------------------
+print_ln(">> Phase 3: Calculating F-statistics...")
+f_stats = sfix.Array(m_genes)
+
+df_between = n_classes - 1
+df_within = total_n - n_classes
+
+msb_arr = sfix.Array(m_genes)
+msw_arr = sfix.Array(m_genes)
+
+@for_range_opt(m_genes)
+def _(j):
+    global_sum = MemValue(sfix(0))
+    @for_range_opt(n_classes)
+    def _(c):
+        global_sum.write(global_sum.read() + class_sums[c][j])
+
+    mu_total = global_sum.read() / total_n
+
+    sst = MemValue(sfix(0))
+    @for_range_opt(total_n)
+    def _(i):
+        diff = X[i][j] - mu_total
+        sst.write(sst.read() + diff * diff)
+
+    ssb = MemValue(sfix(0))
+    @for_range_opt(n_classes)
+    def _(c):
+        diff = class_means[c][j] - mu_total
+        ssb.write(ssb.read() + class_counts[c] * diff * diff)
+
+    raw_ssw = sst.read() - ssb.read()
+    is_positive = raw_ssw > 0
+    safe_ssw = raw_ssw * is_positive
+
+    msb_arr[j] = ssb.read() / df_between
+    msw_arr[j] = safe_ssw / df_within + 0.000001
+
+# Vectorized Secret Division
+f_stats.assign_vector(msb_arr.get_vector() / msw_arr.get_vector())
+
+print_ln(">> Phase 3 Complete. Proceeding to SECURE sort...")
+
+# ---------------------------------------------------------
+# PHASE 4: SECURE TOP-K EXTRACTION (Privacy Fix)
+# ---------------------------------------------------------
+# Instead of revealing all F-stats, we perform a secure ArgMax k times.
+# We only reveal the final *index* of the top feature, keeping the stat secret.
+
+@for_range(k)
+def _(step):
+    max_val = MemValue(f_stats[0])
+    max_idx = MemValue(sint(0)) # Secret integer for the index
+
+    @for_range(1, m_genes)
+    def _(j):
+        # Secure comparison (returns secret shared bit 0 or 1)
+        is_greater = f_stats[j] > max_val.read()
+        
+        # Multiplexer update: IF greater, take new val, ELSE keep old val
+        new_max_val = is_greater * f_stats[j] + (1 - is_greater) * max_val.read()
+        new_max_idx = is_greater * sint(j) + (1 - is_greater) * max_idx.read()
+        
+        max_val.write(new_max_val)
+        max_idx.write(new_max_idx)
+
+    # Reveal ONLY the index of the highest scoring gene
+    best_idx_clear = max_idx.read().reveal()
+    
+    # Print the result
+    print_ln('Rank %s: Feature %s', step, best_idx_clear)
+    
+    # Mask out the selected feature so it isn't picked again
+    # Since the index is now public, we can safely use it as an array address
+    f_stats[best_idx_clear] = sfix(-1.0)
+
+print_ln(">> Protocol Complete.")

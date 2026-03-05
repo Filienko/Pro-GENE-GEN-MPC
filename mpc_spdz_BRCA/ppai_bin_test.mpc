@@ -1,0 +1,172 @@
+import math
+#import numpy as np
+import random
+from Compiler import ml
+
+
+############# Getting secret shares #############
+num_patients_0 = int(program.args[1])
+num_patients_1 = int(program.args[2])
+num_genes = int(program.args[3])
+num_classes = int(program.args[4])
+num_data_custodians = 2
+qtls = [0.25, 0.5, 0.75]
+
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+N = num_patients_0 + num_patients_1
+
+data_0.input_from(0)
+data_1.input_from(1)
+
+############# Combined data #############
+data = sfix.Matrix(N, num_genes+1)
+for i in range(num_patients_0):
+    data[i] = data_0[i]
+
+for i in range(num_patients_1):
+    data[i+num_patients_0] = data_1[i]
+
+
+indices = list(range(len(data)))
+random.shuffle(indices)
+
+train_idx = indices[0:N-N//4]
+val_idx = indices[N-N//4:]
+
+train_data = sfix.Matrix(len(train_idx), num_genes)
+train_labels = sfix.Array(len(train_idx))
+val_data = sfix.Matrix(len(val_idx), num_genes)
+val_labels = sfix.Array(len(val_idx))
+
+for j,idx in enumerate(train_idx):
+         train_data[j] = data[idx][0:num_genes]
+         train_labels[j] = data[idx][num_genes]
+
+for j,idx in enumerate(val_idx):
+         val_data[j] = data[idx][0:num_genes]
+         val_labels[j] = data[idx][num_genes]
+
+
+def bin_column_fold(gene1,n):
+    gene1_q = Array.create_from(gene1)
+    gene1_q.sort()
+    Q = sfix.Array(len(qtls))
+    k = 0
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1:   # because N is public
+            Q[k] = gene1_q[0]
+        elif pos >= n:
+            Q[k] = gene1_q[n]
+        else:
+            Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k = k+1
+
+    gene1_q = Array.create_from(gene1)
+    for i in range(n):
+        x = gene1[i]
+        c0 = (x<Q[0])
+        c1 = (x<Q[1])
+        c2 = (x<Q[2])
+        gene1[i] = 3-c2-c1-c0
+
+    return gene1, Q
+
+
+def bin_column(gene1,n):
+    gene1_q = Array.create_from(gene1)
+    gene1_q.sort()
+    Q = sfix.Array(len(qtls))
+    k = 0
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1:   # because N is public
+            Q[k] = gene1_q[0]
+        elif pos >= n:
+            Q[k] = gene1_q[n]
+        else:
+            Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k = k+1
+
+    gene1_q = Array.create_from(gene1)
+    for i in range(n):
+        x = gene1[i]
+        c0 = (x<Q[0])
+        c1 = (x<Q[1])
+        c2 = (x<Q[2])
+        gene1[i] = 3-c2-c1-c0
+
+    mean = sfix.Array(len(qtls)+1)
+    count = sfix.Array(len(qtls)+1)
+    for i in range(n):
+        for b in range(len(mean)):
+            c = (gene1[i] == b)
+            mean[b] = mean[b] + c * gene1_q[i]
+            count[b] = count[b] + c
+
+    for i in range(len(mean)):
+        mean[i] = mean[i]/count[i]
+
+    return gene1, mean
+
+start_timer(100)
+# Binning train data without mean computation
+Q = []
+for j in range(num_genes):
+    gene1 = sfix.Array(len(train_idx))
+    for p in range(len(train_idx)):
+                gene1[p] = train_data[p][j]
+    gene1,Q_g = bin_column_fold(gene1, len(gene1))
+    Q.append(Q_g)
+    for p in range(len(train_idx)):
+                train_data[p][j] = gene1[p]
+stop_timer(100)
+
+start_timer(200)
+# Binning test data based on Q
+for j in range(num_genes):
+    gene1 = sfix.Array(len(val_idx))
+    for p in range(len(val_idx)):
+                gene1[p] = val_data[p][j]
+    for i in range(len(gene1)):
+            x = gene1[i]
+            c0 = (x<Q[j][0])
+            c1 = (x<Q[j][1])
+            c2 = (x<Q[j][2])
+            gene1[i] = 3-c2-c1-c0
+    for p in range(len(val_idx)):
+                train_data[p][j] = gene1[p]
+stop_timer(200)
+
+
+start_timer(300)
+mean_matrix = []
+# Binning  data with mean computation
+for j in range(num_genes):
+    gene1 = sfix.Array(len(data))
+    for p in range(len(data)):
+                gene1[p] = data[p][j]
+    gene1, mean1 = bin_column(gene1, len(gene1))
+    mean_matrix.append(mean1)
+    for p in range(len(data)):
+                data[p][j] = gene1[p]
+stop_timer(300)
+
+start_timer(400)
+# Inverse binning train data (synthetic_data)
+for j in range(len(data)):
+    for k in range(num_genes):
+                x = data[j][k]
+                c0 = (x == 0)
+                c1 = (x == 1)
+                c2 = (x == 2)
+                c3 = (x == 3)
+                data[j][k] = c0 * mean_matrix[k][0] + c1 * mean_matrix[k][1] + c2 * mean_matrix[k][2] + c3 * mean_matrix[k][3]
+stop_timer(400)
+
+#### In k folds: we call bin on train and bin on test k times and then in final it would be bin on train and nverse bin on train

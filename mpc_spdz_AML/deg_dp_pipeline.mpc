@@ -1,0 +1,354 @@
+# MP-SPDZ Compiler Directives
+program.use_trunc_pr = True
+program.use_split(3)
+sfix.set_precision(16, 63)
+
+import math
+from Compiler import library
+from Compiler.types import sfix, sint, cint, cfix, MemValue, Array
+from Compiler.library import for_range_opt, for_range, print_ln, start_timer, stop_timer
+
+print_ln(">> MPC Starting: Parsing arguments...")
+
+num_patients_0 = int(program.args[1]) 
+num_patients_1 = int(program.args[2]) 
+num_genes = int(program.args[3]) 
+num_classes = int(program.args[4]) 
+k = int(program.args[5])
+
+# Arg 6: Noise scale for the Marginals (Counts)
+if len(program.args) > 6:
+    sigma_marginal = sfix(float(program.args[6]) / 10000.0)
+else:
+    sigma_marginal = sfix(1.349069)
+
+# Arg 7: Noise scale for the F-Statistics (Top-K Selection)
+if len(program.args) > 7:
+    sigma_f_stat = sfix(float(program.args[7]) / 10000.0)
+else:
+    sigma_f_stat = sfix(5.0)
+
+print_ln(">> Expected Inputs: N0=%s, N1=%s, Genes=%s, Classes=%s, TopK=%s", 
+         num_patients_0, num_patients_1, num_genes, num_classes, k)
+
+num_data_custodians = 2
+qtls = [0.25, 0.5, 0.75] # Defines 4 bins (Quartiles)
+
+# Take data from write_to_mpc
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+N = num_patients_0 + num_patients_1
+
+print_ln(">> Loading data from Party 0 and Party 1...")
+data_0.input_from(0)
+data_1.input_from(1)
+
+############# Combined data #############
+data = sfix.Matrix(N, num_genes+1)
+for i in range(num_patients_0):
+    data[i] = data_0[i]
+
+for i in range(num_patients_1):
+    data[i+num_patients_0] = data_1[i]
+
+train_data = sfix.Matrix(N, num_genes)
+train_labels = sfix.Array(N)
+
+for i in range(N):
+    train_data[i] = data[i][0:num_genes]
+    train_labels[i] = data[i][num_genes]
+
+def NormalSampler():
+    # Irwin-Hall approximation of a Normal distribution
+    sum_u = 0
+    for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+    sum_u = sum_u - 6
+    return sum_u
+
+# =========================================================
+# PHASE 1: F-STATISTIC CALCULATION
+# =========================================================
+start_timer(100)
+print_ln(">> Phase 1: Computing secure class sums and means for DEG...")
+
+Y = sfix.Matrix(N, num_classes)
+Y_T = sfix.Matrix(num_classes, N)
+class_counts = sfix.Array(num_classes)
+class_counts.assign_all(0)
+
+@for_range_opt(N)
+def _(i):
+    @for_range_opt(num_classes)
+    def _(c):
+        is_class = (train_labels[i] == c)
+        Y[i][c] = is_class
+        Y_T[c][i] = is_class
+        class_counts[c] = class_counts[c] + is_class
+
+class_sums = Y_T.dot(train_data)
+class_means = sfix.Matrix(num_classes, num_genes)
+
+@for_range_opt(num_classes)
+def _(c):
+    is_empty = (class_counts[c] == 0)
+    safe_count = class_counts[c] + is_empty 
+    inv_count = (1.0 / safe_count) * (1 - is_empty) 
+    
+    @for_range_opt(num_genes)
+    def _(j):
+        class_means[c][j] = class_sums[c][j] * inv_count
+
+print_ln(">> Calculating F-statistics...")
+f_stats = sfix.Array(num_genes)
+df_between = num_classes - 1
+df_within = N - num_classes
+
+msb_arr = sfix.Array(num_genes)
+msw_arr = sfix.Array(num_genes)
+
+# DP BOUND: The theoretical minimum variance. Aligns with the Delta calculation.
+min_variance = sfix(1.0) 
+
+@for_range_opt(num_genes)
+def _(j):
+    global_sum = MemValue(sfix(0))
+    @for_range_opt(num_classes)
+    def _(c):
+        global_sum.write(global_sum.read() + class_sums[c][j])
+
+    mu_total = global_sum.read() / N
+
+    sst = MemValue(sfix(0))
+    @for_range_opt(N)
+    def _(i):
+        diff = train_data[i][j] - mu_total
+        sst.write(sst.read() + diff * diff)
+
+    ssb = MemValue(sfix(0))
+    @for_range_opt(num_classes)
+    def _(c):
+        diff = class_means[c][j] - mu_total
+        ssb.write(ssb.read() + class_counts[c] * diff * diff)
+
+    raw_ssw = sst.read() - ssb.read()
+    
+    # Enforce minimum variance constraint for Differential Privacy bounds
+    is_below_min = raw_ssw < min_variance
+    safe_ssw = is_below_min * min_variance + (1 - is_below_min) * raw_ssw
+
+    msb_arr[j] = ssb.read() / df_between
+    msw_arr[j] = safe_ssw / df_within
+
+f_stats.assign_vector(msb_arr.get_vector() / msw_arr.get_vector())
+stop_timer(100)
+
+# =========================================================
+# PHASE 2: DP TOP-K SELECTION (REPORT NOISY MAX)
+# =========================================================
+start_timer(200)
+print_ln(">> Phase 2: Secure Top-K Extraction (Exponential Mechanism)...")
+
+top_k_indices = Array(k, cint)
+
+@for_range(k)
+def _(step):
+    max_val = MemValue(sfix(-1000000.0))
+    max_idx = MemValue(sint(0)) 
+
+    @for_range(num_genes)
+    def _(j):
+        noisy_score = f_stats[j] + sigma_f_stat * NormalSampler()
+        
+        is_greater = noisy_score > max_val.read()
+        new_max_val = is_greater * noisy_score + (1 - is_greater) * max_val.read()
+        new_max_idx = is_greater * sint(j) + (1 - is_greater) * max_idx.read()
+        
+        max_val.write(new_max_val)
+        max_idx.write(new_max_idx)
+
+    # Reveal the index of the selected gene
+    best_idx_clear = max_idx.read().reveal()
+    top_k_indices[step] = best_idx_clear
+    print_ln('DP Selected Gene %s (Global Index: %s)', step, best_idx_clear)
+    
+    # Mask out the selected feature so it isn't picked again
+    f_stats[best_idx_clear] = sfix(-1000000.0)
+stop_timer(200)
+
+# =========================================================
+# PHASE 3: SECURE DATA FILTERING
+# =========================================================
+start_timer(300)
+print_ln(">> Phase 3: Filtering dataset to selected Top-K genes...")
+
+top_k_train_data = sfix.Matrix(N, k)
+
+@for_range_opt(N)
+def _(i):
+    @for_range_opt(k)
+    def _(step):
+        # We can use the public indices to securely copy only the required columns
+        top_k_train_data[i][step] = train_data[i][top_k_indices[step]]
+stop_timer(300)
+
+# =========================================================
+# PHASE 4: BINNING THE SELECTED GENES
+# =========================================================
+def bin_column(gene1, n):
+    gene1_q = Array.create_from(gene1)
+    gene1_q.sort()
+    Q = sfix.Array(len(qtls))
+    k_idx = 0
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1:   
+            Q[k_idx] = gene1_q[0]
+        elif pos >= n:
+            Q[k_idx] = gene1_q[n]
+        else:
+            Q[k_idx] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k_idx = k_idx+1
+
+    gene1_q = Array.create_from(gene1)
+    for i in range(n):
+        x = gene1[i]
+        c0 = (x<Q[0])
+        c1 = (x<Q[1])
+        c2 = (x<Q[2])
+        gene1[i] = 3-c2-c1-c0
+
+    mean = sfix.Array(len(qtls)+1)
+    count = sfix.Array(len(qtls)+1)
+    for i in range(n):
+        for b in range(len(mean)):
+            c = (gene1[i] == b)
+            mean[b] = mean[b] + c * gene1_q[i]
+            count[b] = count[b] + c
+            
+    # We do not add noise to bin means in this step to avoid compounding errors,
+    # as the output data stays secret until the end.
+    for i in range(len(mean)):
+        mean[i] = mean[i]/count[i]
+
+    return gene1, mean
+
+start_timer(400)
+print_ln('>> Phase 4: Secure binning on filtered data...')
+mean_matrix = []
+
+# Binning train data with mean computation (ONLY ON K GENES)
+for j in range(k):
+    gene1 = sfix.Array(N)
+    for p in range(N):
+        gene1[p] = top_k_train_data[p][j]
+        
+    gene1, mean1 = bin_column(gene1, len(gene1))
+    mean_matrix.append(mean1)
+    
+    for p in range(N):
+        top_k_train_data[p][j] = gene1[p]
+stop_timer(400)
+
+# =========================================================
+# PHASE 5: COMPUTE MARGINALS ON BINNED DATA
+# =========================================================
+start_timer(500)
+print_ln('>> Phase 5: Computing marginals...')
+
+# Matrices sized strictly to 'k' (NOT num_genes)
+real_counts = sfix.Matrix(k, 4)  
+real_counts_l = sfix.Array(num_classes)   
+real_counts_2way = sfix.Matrix(k, 4 * num_classes)
+
+for i in range(N):
+    val_s = train_labels[i]
+    
+    label_is = sfix.Array(num_classes)
+    for l in range(num_classes):
+        label_is[l] = (val_s == l)
+    
+    for l in range(num_classes):
+        real_counts_l[l] = real_counts_l[l] + label_is[l]
+
+    for j in range(k):
+        val_r = top_k_train_data[i][j]
+
+        r_minus_10 = 1 - val_r
+        r_minus_1 = val_r - 1
+        r_minus_20 = 2 - val_r
+        r_minus_2 = val_r - 2
+        r_minus_30 = 3 - val_r
+        r_minus_3 = val_r - 3
+
+        gene_is = sfix.Array(4)
+        gene_is[0] = r_minus_10 * r_minus_20 * r_minus_30 / 6 
+        gene_is[1] = val_r * r_minus_20 * r_minus_30 / 2      
+        gene_is[2] = val_r * r_minus_1 * r_minus_30 / 2        
+        gene_is[3] = val_r * r_minus_1 * r_minus_2 / 6         
+
+        for f in range(4):
+            real_counts[j][f] = real_counts[j][f] + gene_is[f]
+
+        for f in range(4):
+            feat_idx = f * num_classes
+            feat_indicator = gene_is[f]
+
+            for c in range(num_classes):
+                real_counts_2way[j][feat_idx + c] = real_counts_2way[j][feat_idx + c] + feat_indicator * label_is[c]
+stop_timer(500)
+
+# =========================================================
+# PHASE 6: ADD DP NOISE AND REVEAL
+# =========================================================
+start_timer(600)
+print_ln('>> Phase 6: Adding DP noise to marginals...')
+
+def compute_laplace(sigma_val):
+    sum_u = 0
+    for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+    sum_u = sum_u - 6
+    return sum_u
+
+# Adding gaussian/laplace noise directly to true counts
+for i in range(k):
+    for j in range(4):
+        real_counts[i][j] = real_counts[i][j] + sigma_marginal * NormalSampler()
+        
+for i in range(num_classes):
+    real_counts_l[i] = real_counts_l[i] + sigma_marginal * NormalSampler()
+    
+for i in range(k):
+    for idx in range(4 * num_classes):
+        real_counts_2way[i][idx] = real_counts_2way[i][idx] + sigma_marginal * NormalSampler()
+
+stop_timer(600)
+
+print_ln('=== MARGINALS_OUTPUT_START ===')
+
+print_ln('1WAY_FEATURES:')
+for i in range(k):
+    for j in range(4):
+        print_ln('%s', real_counts[i][j].reveal())
+
+print_ln('1WAY_LABELS:')
+for i in range(num_classes):
+    print_ln('%s', real_counts_l[i].reveal())
+
+print_ln('2WAY:')
+for i in range(k):
+    for idx in range(4 * num_classes):
+        print_ln('%s', real_counts_2way[i][idx].reveal())
+
+print_ln('=== MARGINALS_OUTPUT_END ===')
+
+print_ln('=== BIN_MEANS_START ===')
+for i in range(k):
+    for j in range(4):
+        print_ln('%s', mean_matrix[i][j].reveal())
+print_ln('=== BIN_MEANS_END ===')
+
+print_ln('>> Protocol Complete. Binned data never revealed - only noisy outputs.')

@@ -1,0 +1,17 @@
+# -----------------------------------------------------------------------
+# UPDATED OUTPUT SECTION
+# -----------------------------------------------------------------------
+# Use a simple print to signal the start
+print_ln('\n' + '-'*40)
+print_ln("SECURE TOP-K RESULTS (Total Features: %s)", M)
+print_ln('-'*40)
+
+@for_range(K)
+def _(k):
+    # Explicitly reveal to ensure the value is synchronized across players
+    revealed_idx = selected_indices[k].reveal()
+    
+    # Adding a clear prefix to help your Python regex/parser find it
+    print_ln("RANK_OUTPUT | Rank %s: Gene Index %s", k + 1, revealed_idx)
+
+print_ln('-'*40 + '\n')

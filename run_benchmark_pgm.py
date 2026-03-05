@@ -449,6 +449,7 @@ if __name__ == "__main__":
     run_benchmark(
         full_data_path=args.data,
         label_column=args.label,
+        # feature_sizes=[5],
         feature_sizes=[100, 200, 500, 800, 1000],
         epsilon=args.epsilon,
         delta=args.delta,
