@@ -199,10 +199,17 @@ class SecureMPCPrivatePGM:
                 self.delta_marginals = self.target_delta * 1.0
 
             if self.target_delta > 0:
-                sigma_bin = 0.0  
-                l2_sens_1way = math.sqrt(num_genes + 1)
-                l2_sens_2way = math.sqrt(num_genes)
-                sigma_marginal = self.moments_calibration(l2_sens_1way, l2_sens_2way, self.epsilon_marginals, self.delta_marginals)
+                # Calculate the smallest possible bin size
+                # Using exact quartiles means each bin has 1/4th of the data
+                num_train = 945 # TODO: change to computed number so that I do not need to do this
+                bin_size = num_train / bin_num 
+
+                # Calculate the L2 sensitivity of the means
+                # How much one patient can change the mean * sqrt(number of genes)
+                l2_sensitivity_mean = (max_gene_val / bin_size) * math.sqrt(num_genes)                
+                # sigma_bin = self.moments_calibration(l2_sensitivity_mean, 1e-9, self.epsilon_binning, self.delta_binning)
+                sigma_bin = 0.0  # Following PRO-GENE-GEN we do not privatize the bins
+                sigma_marginal = self.moments_calibration(1.0, 1.0, self.epsilon_marginals, self.delta_marginals)
             else:
                 sigma_bin = 1.0 / num_genes / 2.0
                 sigma_marginal = 1.0 / num_genes / 2.0
@@ -267,6 +274,7 @@ class SecureMPCPrivatePGM:
 
         print("✓ Model training completed")
 
+
     def _convert_to_measurements(self, marginals_1way, marginals_2way, config,
                                   sigma, cliques=None):
         """
@@ -308,13 +316,8 @@ class SecureMPCPrivatePGM:
 
             I = sparse.eye(len(y))
 
-            # ==========================================================
-            # MATHEMATICAL EQUIVALENCE FIX (1-Way)
-            # MPC outputs raw counts. The cleartext script scales counts 
-            # by `wgt` before appending. We do that here to match.
-            # ==========================================================
             if self.target_delta > 0:
-                measurements.append((I, y, sigma, (col,)))
+                measurements.append((I, y / wgt, 1.0 / wgt, (col,)))
             else:
                 measurements.append((I, y, sigma, (col,)))
 
@@ -340,12 +343,8 @@ class SecureMPCPrivatePGM:
             print(f"      Got {len(y)} values")
             I = sparse.eye(len(y))
 
-            # ==========================================================
-            # MATHEMATICAL EQUIVALENCE FIX (2-Way)
-            # Scale MPC counts to identically match cleartext `y` formatting.
-            # ==========================================================
             if self.target_delta > 0:
-                measurements.append((I, y, sigma, cl))
+                measurements.append((I, y / wgt, 1.0 / wgt, cl))
             else:
                 measurements.append((I, y, sigma, cl))
 

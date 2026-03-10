@@ -1,0 +1,190 @@
+import math
+from Compiler import ml
+from Compiler.library import print_ln
+
+############# Getting secret shares #############
+num_patients_0 = int(program.args[1])
+num_patients_1 = int(program.args[2])
+num_genes = int(program.args[3])
+num_classes = int(program.args[4]) # Fully Dynamic
+sigma = cfix(float(program.args[5])) 
+target_delta = 1e-5
+qtls = [0.25, 0.5, 0.75]
+
+N = num_patients_0 + num_patients_1
+
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+data_0.input_from(0)
+data_1.input_from(1)
+
+############# Combined data #############
+data = sfix.Matrix(N, num_genes+1)
+for i in range(num_patients_0):
+    data[i] = data_0[i]
+
+for i in range(num_patients_1):
+    data[i+num_patients_0] = data_1[i]
+
+train_data = sfix.Matrix(N, num_genes)
+train_labels = sfix.Array(N)
+
+for i in range(N):
+    train_data[i] = data[i][0:num_genes]
+    train_labels[i] = data[i][num_genes]
+
+############# Helpers #############
+def NormalSampler():
+    sum_u = sfix(0)
+    for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+    sum_u = sum_u - 6
+    return sum_u
+
+def bin_column(gene1, n):
+    gene1_q = Array.create_from(gene1)
+    gene1_q.sort()
+    Q = sfix.Array(3)
+    k = 0
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1:
+            Q[k] = gene1_q[0]
+        elif pos >= n:
+            Q[k] = gene1_q[n-1]
+        else:
+            Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k = k+1
+
+    for i in range(n):
+        x = gene1[i]
+        c0 = (x < Q[0])
+        c1 = (x < Q[1])
+        c2 = (x < Q[2])
+        gene1[i] = 3 - c2 - c1 - c0
+
+    mean = sfix.Array(4)
+    count = sfix.Array(4)
+    mean.assign_all(0)
+    count.assign_all(0)
+
+    for i in range(n):
+        x = gene1[i]
+        # OPTIMIZATION: Multiplication is cheaper than division
+        c0 = (1-x) * (2-x) * (3-x) * 0.16666666666666666
+        c1 = x * (2-x) * (3-x) * 0.5
+        c2 = x * (x-1) * (3-x) * 0.5
+        c3 = x * (x-1) * (x-2) * 0.16666666666666666
+
+        mean[0] = mean[0] + c0 * gene1_q[i]
+        mean[1] = mean[1] + c1 * gene1_q[i]
+        mean[2] = mean[2] + c2 * gene1_q[i]
+        mean[3] = mean[3] + c3 * gene1_q[i]
+        
+        count[0] = count[0] + c0
+        count[1] = count[1] + c1
+        count[2] = count[2] + c2
+        count[3] = count[3] + c3
+
+    for i in range(4):
+        # Adding safe constant to prevent division by zero
+        mean[i] = mean[i] / (count[i] + 0.0001)
+
+    return gene1, mean
+
+############# STEP 1: BINNING (NON-OPTIMIZED) #############
+start_timer(200)
+print_ln('Starting secure binning...')
+mean_matrix = []
+
+for j in range(num_genes):
+    gene_col = sfix.Array(N)
+    for p in range(N):
+        gene_col[p] = train_data[p][j]
+
+    binned_gene, bin_means = bin_column(gene_col, N)
+    mean_matrix.append(bin_means)
+
+    for p in range(N):
+        train_data[p][j] = binned_gene[p]
+stop_timer(200)
+
+############# STEP 2: MARGINALS (MILDLY OPTIMIZED) #############
+start_timer(300)
+print_ln('Computing marginals on binned data...')
+
+real_counts = sfix.Matrix(num_genes, 4)
+real_counts_l = sfix.Array(num_classes)
+real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)
+
+# OPTIMIZATION: Hoisted arrays out of the N loop to prevent massive memory allocations
+label_is = sfix.Array(num_classes)
+gene_is = sfix.Array(4)
+
+for i in range(N):
+    val_s = train_labels[i]
+
+    # DYNAMIC LABEL INDICATORS & MARGINALS MERGED
+    for c in range(num_classes):
+        label_is[c] = (val_s == c).if_else(sfix(1.0), sfix(0.0))
+        # OPTIMIZATION: Merged the 1-way label count update into this loop
+        real_counts_l[c] = real_counts_l[c] + label_is[c]
+
+    for j in range(num_genes):
+        val_r = train_data[i][j]
+        
+        r10, r1, r20, r2, r30, r3 = 1-val_r, val_r-1, 2-val_r, val_r-2, 3-val_r, val_r-3
+        
+        # OPTIMIZATION: Multiplication is cheaper than division
+        gene_is[0] = r10 * r20 * r30 * 0.16666666666666666
+        gene_is[1] = val_r * r20 * r30 * 0.5
+        gene_is[2] = val_r * r1 * r30 * 0.5
+        gene_is[3] = val_r * r1 * r2 * 0.16666666666666666
+
+        for f in range(4):
+            real_counts[j][f] = real_counts[j][f] + gene_is[f]
+
+            feat_idx = f * num_classes
+            for c in range(num_classes):
+                real_counts_2way[j][feat_idx + c] = real_counts_2way[j][feat_idx + c] + gene_is[f] * label_is[c]
+stop_timer(300)
+
+############# STEP 3: NOISE (NON-OPTIMIZED) #############
+start_timer(400)
+print_ln('Adding DP noise...')
+
+w_1way = 0.03229168418603133
+w_2way = 0.03230853348756192
+
+for i in range(num_genes):
+    for j in range(4): 
+        real_counts[i][j] = real_counts[i][j] * w_1way + sigma * NormalSampler()
+
+for i in range(num_classes):
+    real_counts_l[i] = real_counts_l[i] * w_1way + sigma * NormalSampler()
+
+for i in range(num_genes):
+    for k in range(4 * num_classes):
+        real_counts_2way[i][k] = real_counts_2way[i][k] * w_2way + sigma * NormalSampler()
+stop_timer(400)
+
+############# STEP 4: REVEAL #############
+start_timer(500)
+
+print_ln('=== MARGINALS_OUTPUT_START ===')
+for i in range(num_genes):
+    for j in range(4): print_ln('%s', real_counts[i][j].reveal())
+for i in range(num_classes): print_ln('%s', real_counts_l[i].reveal())
+for i in range(num_genes):
+    for k in range(4 * num_classes): print_ln('%s', real_counts_2way[i][k].reveal())
+print_ln('=== MARGINALS_OUTPUT_END ===')
+
+print_ln('=== BIN_MEANS_START ===')
+for i in range(num_genes):
+    for j in range(4): print_ln('%s', mean_matrix[i][j].reveal())
+print_ln('=== BIN_MEANS_END ===')
+
+stop_timer(500)
+print_ln('Complete!')

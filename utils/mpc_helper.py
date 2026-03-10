@@ -75,6 +75,10 @@ class MPCProtocolExecutor:
         start_time = time.time()
         # Changed from os.system to subprocess.run to capture the text output
         result = subprocess.run(compile_cmd, shell=True, capture_output=True, text=True)
+        print("--- MP-SPDZ STDOUT ---")
+        print(result.stdout)
+        print("--- MP-SPDZ STDERR ---")
+        print(result.stderr)
         MPC_METRICS['compile_time'] += (time.time() - start_time)
 
         if result.returncode == 0:
@@ -109,7 +113,10 @@ class MPCProtocolExecutor:
             start_time = time.time()
             result = subprocess.run(cmd, cwd=self.mpspdz_path, capture_output=True, text=True, check=True)
             MPC_METRICS['execute_time'] += (time.time() - start_time)
-            
+            print("--- MP-SPDZ STDOUT ---")
+            print(result.stdout)
+            print("--- MP-SPDZ STDERR ---")
+            print(result.stderr)
             # --- NEW: PARSE DATA SENT ---
             # Search both stdout and stderr just in case MP-SPDZ routes it differently
             combined_output = result.stdout + result.stderr

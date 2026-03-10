@@ -250,7 +250,7 @@ def run_benchmark(full_data_path, label_column, epsilons, delta=1e-5,
 
     y = df[label_column]
     X = df.drop(columns=[label_column])
-    # X = X.sample(n=5, axis=1)
+    X = X.sample(n=100, axis=1, random_state=42)
     n_total_features = X.shape[1]
     print(f"Dataset loaded. Total genes/features to use: {n_total_features}")
 
