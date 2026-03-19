@@ -1,0 +1,249 @@
+import math
+import random
+from Compiler import ml
+from Compiler.library import vectorize
+sfix.set_precision(16, 40)
+
+############# Getting hyperparameters #############
+
+num_patients_0 = int(program.args[1]) #951
+num_patients_1 = int(program.args[2]) #950
+num_genes = int(program.args[3]) #958
+num_classes = int(program.args[4]) #5
+sigma_int = int(program.args[5])
+sigma_bin_int = int(program.args[6])
+upper_bound_input = int(program.args[7]) # 15
+
+UPPER_BOUND = cfix(upper_bound_input)
+LOWER_BOUND = cfix(0)
+RANGE_WIDTH = UPPER_BOUND - LOWER_BOUND
+
+target_delta = 1e-5
+num_data_custodians = 2
+qtls = [0.25, 0.5, 0.75]
+
+############# Getting secret shares #############
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+N = num_patients_0 + num_patients_1
+
+data_0.input_from(0)
+data_1.input_from(1)
+
+############# Combined data & Transpose Trick #############
+# We transpose the data so rows are genes and columns are patients.
+# This allows O(1) vectorized row extraction later.
+train_data_T = sfix.Matrix(num_genes, N)
+train_labels = sfix.Array(N)
+
+# Populate combined data and transpose simultaneously
+for i in range(num_patients_0):
+    for j in range(num_genes):
+        train_data_T[j][i] = data_0[i][j]
+    train_labels[i] = data_0[i][num_genes]
+
+for i in range(num_patients_1):
+    idx = i + num_patients_0
+    for j in range(num_genes):
+        train_data_T[j][idx] = data_1[i][j]
+    train_labels[idx] = data_1[i][num_genes]
+
+############# Vectorized Helpers #############
+@vectorize
+def get_gaussian_value():
+    """
+    Generates a single Irwin-Hall approximation.
+    The @vectorize decorator allows us to call this with a 'size' argument.
+    """
+    sum_u = sfix(0)
+    for _ in range(12):
+        sum_u += sfix.get_random(0, 1)
+    return sum_u - 6
+
+def bin_column_vectorized(gene_col, n):
+    """
+    Vectorized binning with DP Clipping and Fixed Denominator Strategy.
+    """
+    # --- 1. SECURE CLIPPING (FIXED) ---
+    # ERROR FIX: Force broadcasting using arithmetic.
+    # We take 'gene_col' (size N), multiply by 0 to create a zero-vector of size N,
+    # and then add our scalar bound. This forces the scalar to expand to the vector size.
+    LB_vec = (gene_col * 0) + LOWER_BOUND
+    UB_vec = (gene_col * 0) + UPPER_BOUND
+    
+    # Now the 'if_else' has vectors of size N for all three arguments.
+    clipped_col = (gene_col < LB_vec).if_else(LB_vec, gene_col)
+    clipped_col = (clipped_col > UB_vec).if_else(UB_vec, clipped_col)
+
+    # --- 2. QUANTILE LOGIC (Unchanged) ---
+    gene1_q = Array.create_from(gene_col)
+    gene1_q.sort()
+    
+    Q = sfix.Array(len(qtls))
+    k = 0
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1:
+            Q[k] = gene1_q[0]
+        elif pos >= n:
+            Q[k] = gene1_q[n]
+        else:
+            Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k = k+1
+
+    # Vectorized comparisons - NOW SAFE
+    # Q[k] is a scalar, but sfix usually broadcasts scalars against arrays 
+    # in simple comparisons better than it does in complex if_else chains.
+    # If this also fails, you would need to vector-expand Q[k] too.
+    # But usually, the clipping 'if_else' is the stricter part.
+    c0 = (gene_col < Q[0])
+    c1 = (gene_col < Q[1])
+    c2 = (gene_col < Q[2])
+    binned_gene = 3 - c2 - c1 - c0
+
+    # --- 3. DP NOISY SUM & FIXED MEAN (Unchanged) ---
+    mean_output = sfix.Array(4)
+    noise_array = get_gaussian_value(size=4)
+    sigma_bin_val = cfix(sigma_bin_int) / 10000.0
+    expected_count = sfix(n) / sfix(4)
+    
+    # Calculate Range Width (Public Scalar)
+    # It is safe to keep this as a scalar because we multiply it later
+    # and multiplication supports scalar * vector broadcasting better.
+    RANGE_WIDTH = UPPER_BOUND - LOWER_BOUND
+
+    for b in range(4):
+        c_vec = (binned_gene == b)
+        
+        # Use clipped_col for the sum!
+        exact_sum = sum(c_vec * clipped_col)
+        
+        noise_scaled = sigma_bin_val * RANGE_WIDTH * noise_array[b]
+        noisy_sum = exact_sum + noise_scaled
+        
+        mean_output[b] = noisy_sum / expected_count
+
+    return binned_gene, mean_output
+
+############# STEP 1: BINNING (SECRET) #############
+start_timer(200)
+mean_matrix = []
+print_ln('Starting secure binning...')
+
+for j in range(num_genes):
+    # O(1) extraction due to the transpose trick
+    gene_col = train_data_T[j] 
+    binned_col, mean1 = bin_column_vectorized(gene_col, N)
+    mean_matrix.append(mean1)
+    # Write back the binned values into our transposed matrix
+    train_data_T[j] = binned_col
+
+stop_timer(200)
+print_ln('Binning complete')
+
+############# STEP 2: COMPUTE MARGINALS ON BINNED DATA (SECRET) #############
+start_timer(300)
+print_ln('Computing marginals on binned data...')
+
+real_counts = sfix.Matrix(num_genes, 4)  
+real_counts_l = sfix.Array(num_classes)   
+real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)  
+
+# Pre-compute label indicator vectors (Size N)
+label_is_vecs = []
+for l in range(num_classes):
+    l_vec = (train_labels == l)
+    label_is_vecs.append(l_vec)
+    real_counts_l[l] = sum(l_vec)
+
+# Compute marginals column by column
+for j in range(num_genes):
+    val_r = train_data_T[j] # Entire column of N patients
+
+    # Vectorized polynomial calculations
+    r_minus_10 = 1 - val_r
+    r_minus_1 = val_r - 1
+    r_minus_20 = 2 - val_r
+    r_minus_2 = val_r - 2
+    r_minus_30 = 3 - val_r
+    r_minus_3 = val_r - 3
+
+    gene_is_vecs = [
+        (r_minus_10 * r_minus_20 * r_minus_30) / 6,
+        (val_r * r_minus_20 * r_minus_30) / 2,
+        (val_r * r_minus_1 * r_minus_30) / 2,
+        (val_r * r_minus_1 * r_minus_2) / 6
+    ]
+
+    for f in range(4):
+        real_counts[j][f] = sum(gene_is_vecs[f])
+        
+        feat_idx = f * num_classes
+        for c in range(num_classes):
+            # Highly optimized batched network instruction
+            real_counts_2way[j][feat_idx + c] = sfix.dot_product(gene_is_vecs[f], label_is_vecs[c])
+
+stop_timer(300)
+
+############# STEP 3: ADD NOISE (SECRET) #############
+start_timer(400)
+print_ln('Adding DP noise...')
+
+sigma = cfix(sigma_int) / 10000.0
+
+# 1-way marginals noise
+# Call the vectorized function with the required sizes
+noise_1way_features = get_gaussian_value(size=(num_genes * 4))
+noise_1way_labels = get_gaussian_value(size=num_classes)
+
+for i in range(num_genes):
+    for j in range(4):
+        idx = (i * 4) + j
+        real_counts[i][j] = real_counts[i][j] + (sigma * noise_1way_features[idx])
+
+for i in range(num_classes):
+    real_counts_l[i] = real_counts_l[i] + (sigma * noise_1way_labels[i])
+
+# 2-way marginals noise
+if target_delta == 0:
+    sigma = 1.0 / num_genes / 2.0
+
+total_2way_elements = num_genes * 4 * num_classes
+noise_2way = get_gaussian_value(size=total_2way_elements)
+
+for i in range(num_genes):
+    for k in range(4 * num_classes):
+        idx = (i * 4 * num_classes) + k
+        real_counts_2way[i][k] = real_counts_2way[i][k] + (sigma * noise_2way[idx])
+
+stop_timer(400)
+
+############# STEP 4: REVEAL #############
+start_timer(500)
+
+print_ln('=== MARGINALS_OUTPUT_START ===')
+print_ln('1WAY_FEATURES:')
+for i in range(num_genes):
+    for j in range(4):
+        print_ln('%s', real_counts[i][j].reveal())
+
+print_ln('1WAY_LABELS:')
+for i in range(num_classes):
+    print_ln('%s', real_counts_l[i].reveal())
+
+print_ln('2WAY:')
+for i in range(num_genes):
+    for k in range(4 * num_classes):
+        print_ln('%s', real_counts_2way[i][k].reveal())
+print_ln('=== MARGINALS_OUTPUT_END ===')
+
+print_ln('=== BIN_MEANS_START ===')
+for i in range(num_genes):
+    for j in range(4):
+        print_ln('%s', mean_matrix[i][j].reveal())
+print_ln('=== BIN_MEANS_END ===')
+
+stop_timer(500)
+print_ln('Complete!')

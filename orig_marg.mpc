@@ -1,0 +1,126 @@
+from Compiler.library import print_ln
+from Compiler.types import sfix, cfix, Array, Matrix
+
+num_patients_0 = int(program.args[1])
+num_patients_1 = int(program.args[2])
+num_genes = int(program.args[3])
+num_classes = int(program.args[4])
+sigma = cfix(float(program.args[5]))
+N = num_patients_0 + num_patients_1
+
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+data_0.input_from(0)
+data_1.input_from(1)
+
+data = sfix.Matrix(N, num_genes+1)
+
+
+
+
+real_counts = sfix.Matrix(num_genes, 4)  # 1-way feature marginals
+real_counts_l = sfix.Array(num_classes)   # 1-way label marginals
+real_counts_2way = sfix.Matrix(num_genes, 20)  # 2-way marginals (flattened: 4 feature vals * 5 label vals)
+
+########## Compute marginals marginals optimized
+for i in range(N):
+    val_s = data[i][num_genes]
+    label_is = sfix.Array(5)
+
+    s_minus_0 = val_s
+    s_minus_1 = val_s - 1
+    s_minus_2 = val_s - 2
+    s_minus_3 = val_s - 3
+    s_minus_4 = val_s - 4
+
+    label_is[0] = s_minus_1 * s_minus_2 * s_minus_3 * s_minus_4 / 24  # (val_s == 0)
+    label_is[1] = s_minus_0 * s_minus_2 * s_minus_3 * s_minus_4 / 6   # (val_s == 1)
+    label_is[2] = s_minus_0 * s_minus_1 * s_minus_3 * s_minus_4 / 2   # (val_s == 2)
+    label_is[3] = s_minus_0 * s_minus_1 * s_minus_2 * s_minus_4 / 6   # (val_s == 3)
+    label_is[4] = s_minus_0 * s_minus_1 * s_minus_2 * s_minus_3 / 24  # (val_s == 4)
+
+    # Update 1-way label marginals
+    for l in range(5):
+        real_counts_l[l] = real_counts_l[l] + label_is[l]
+
+    for j in range(num_genes):
+        val_r = data[i][j]
+
+        r_minus_10 = 1 - val_r
+        r_minus_1 = val_r - 1
+        r_minus_20 = 2 - val_r
+        r_minus_2 = val_r - 2
+        r_minus_30 = 3 - val_r
+        r_minus_3 = val_r - 3
+
+        gene_is = sfix.Array(4)
+        gene_is[0] = r_minus_10 * r_minus_20 * r_minus_30 / 6      # (val_r == 0)
+        gene_is[1] = val_r * r_minus_20 * r_minus_30 / 2          # (val_r == 1)
+        gene_is[2] = val_r * r_minus_1 * r_minus_30 / 2        # (val_r == 2)
+        gene_is[3] = val_r * r_minus_1 * r_minus_2 / 6      # (val_r == 3)
+
+
+        # Update 1-way feature marginals
+        for f in range(4):
+            real_counts[j][f] = real_counts[j][f] + gene_is[f]
+
+        # Update 2-way marginals
+        base_idx = j * 20  # for each gene
+        for f in range(4):
+            feat_idx = f * 5
+            feat_indicator = gene_is[f]
+
+            # Unroll the inner loop for better performance
+            real_counts_2way[j][feat_idx + 0] = real_counts_2way[j][feat_idx + 0] + feat_indicator * label_is[0]
+            real_counts_2way[j][feat_idx + 1] = real_counts_2way[j][feat_idx + 1] + feat_indicator * label_is[1]
+            real_counts_2way[j][feat_idx + 2] = real_counts_2way[j][feat_idx + 2] +  feat_indicator * label_is[2]
+            real_counts_2way[j][feat_idx + 3] = real_counts_2way[j][feat_idx + 3] + feat_indicator * label_is[3]
+            real_counts_2way[j][feat_idx + 4] = real_counts_2way[j][feat_idx + 4] + feat_indicator * label_is[4]
+
+
+target_delta = 1e-5
+sigma = 1.349069114347003 # wil be computed in clear by one of the MPC servers)
+
+def NormalSampler():
+   sum_u = 0
+   for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+   sum_u = sum_u - 6
+   return sum_u
+
+def compute_laplace(sigma):
+   sum_u = 0
+   for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+   sum_u = sum_u - 6
+   return sum_u
+
+
+####### Noisy 1-way marginals
+w = 0.03229168418603133 
+
+for i in range(num_genes):
+    # FIX: 'k' limit is 4 (the number of bins)
+    for k in range(4):
+        # FIX: Changed 'j' to 'k'
+        real_counts[i][k] = real_counts[i][k] * w + sigma * NormalSampler()
+
+for i in range(num_classes):
+    # FIX: Read from real_counts_l, not real_counts
+    real_counts_l[i] = real_counts_l[i] * w + sigma * NormalSampler()
+
+num_cliques = num_genes 
+
+
+####### Noisy 2-way marginals
+if target_delta == 0:
+    sigma = 1.0 / num_cliques / 2.0
+
+w_2way = 0.03230853348756192 
+
+for i in range(num_genes):
+    # 20 is correct here (4 bins * 5 classes)
+    for k in range(20):
+        # FIX: Changed 'j' to 'k'
+        real_counts_2way[i][k] = real_counts_2way[i][k] * w_2way + sigma * NormalSampler()
+

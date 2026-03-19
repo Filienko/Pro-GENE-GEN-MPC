@@ -1,0 +1,171 @@
+import math
+from Compiler import ml
+from Compiler.library import print_ln, start_timer, stop_timer, for_range_opt
+
+############# CONSTANTS & SETUP #############
+num_patients_0 = int(program.args[1])
+num_patients_1 = int(program.args[2])
+num_genes = int(program.args[3]) 
+num_classes = int(program.args[4]) 
+sigma_int = int(program.args[5])
+target_delta = 1e-5
+
+N = num_patients_0 + num_patients_1
+B = 100 
+
+q1_target = int((N - 1) * 0.25)
+q2_target = int((N - 1) * 0.50)
+q3_target = int((N - 1) * 0.75)
+
+# Calculate the actual log-space midpoints of the public buckets
+global_min, global_max = 0.0, 22.0
+bucket_size = (global_max - global_min) / B
+bucket_midpoints = sfix.Array(B)
+for b in range(B):
+    # Midpoint of the bucket
+    bucket_midpoints[b] = global_min + (b + 0.5) * bucket_size
+
+############# DP VECTORIZED SAMPLER #############
+@vectorize
+def get_gaussian_value():
+    sum_u = sfix(0)
+    for _ in range(12):
+        sum_u += sfix.get_random(0, 1)
+    return sum_u - 6
+
+############# STEP 1: READ & AGGREGATE HISTOGRAMS #############
+print_ln('Reading local histograms and securely aggregating...')
+
+flat_size = num_genes * B * num_classes
+flat_0 = sint.Array(flat_size)
+flat_1 = sint.Array(flat_size)
+
+flat_0.input_from(0)
+flat_1.input_from(1)
+
+global_flat = sint.Array(flat_size)
+
+# Use @for_range_opt to securely add the arrays and store them in RAM
+@for_range_opt(flat_size)
+def _(i):
+    global_flat[i] = flat_0[i] + flat_1[i]
+
+############# STEP 2: MARGINALS & QUANTILE MAPPING (VECTORIZED) #############
+start_timer(200)
+print_ln('Mapping percentiles and computing marginals...')
+
+real_counts = sint.Matrix(num_genes, 4)
+real_counts.assign_all(0)
+
+real_counts_2way = sint.Matrix(num_genes, 4 * num_classes)
+real_counts_2way.assign_all(0)
+
+real_counts_l = sint.Array(num_classes)
+real_counts_l.assign_all(0)
+
+bin_sums = sfix.Matrix(num_genes, 4)
+bin_sums.assign_all(0)
+
+# 1. Calculate 1-Way Label Marginals
+# (Standard loop is fine here because 100 x 5 is tiny)
+for b in range(B):
+    for c in range(num_classes):
+        idx = 0 * (B * num_classes) + b * num_classes + c
+        real_counts_l[c] += global_flat[idx]
+
+# 2. The Core Loop
+# @for_range_opt stops the compiler from unrolling the 958 genes
+@for_range_opt(num_genes)
+def process_gene(g):
+    feat_hist = sint.Array(B)
+    feat_hist.assign_all(0)
+    
+    # @for_range_opt stops the compiler from unrolling the 100 buckets
+    @for_range_opt(B)
+    def process_bucket(b):
+        # We leave this as a standard loop because 5 iterations is harmless to unroll
+        for c in range(num_classes):
+            idx = g * (B * num_classes) + b * num_classes + c
+            feat_hist[b] += global_flat[idx]
+            
+    # Secure Prefix Sum
+    prefix = sint.Array(B)
+    prefix[0] = feat_hist[0]
+    @for_range_opt(B - 1)
+    def _(b_minus_1):
+        b = b_minus_1 + 1
+        prefix[b] = prefix[b-1] + feat_hist[b]
+        
+    # Route fine buckets to coarse bins based on prefix counts
+    @for_range_opt(B)
+    def route_bins(b):
+        is_gt_q1 = (prefix[b] > q1_target)
+        is_gt_q2 = (prefix[b] > q2_target)
+        is_gt_q3 = (prefix[b] > q3_target)
+        coarse_bin = is_gt_q1 + is_gt_q2 + is_gt_q3 
+        
+        # Standard loop for the 4 bins
+        for f in range(4):
+            is_bin_f = (coarse_bin == f)
+            real_counts[g][f] += (is_bin_f * feat_hist[b])
+            
+            # Secure geometric sum calculation
+            bin_sums[g][f] += sfix(is_bin_f * feat_hist[b]) * bucket_midpoints[b]
+            
+            # Standard loop for the 5 classes
+            for c in range(num_classes):
+                flat_idx = g * (B * num_classes) + b * num_classes + c
+                real_counts_2way[g][f * num_classes + c] += (is_bin_f * global_flat[flat_idx])
+
+stop_timer(200)
+############# STEP 3: NOISE AND OUTPUT #############
+start_timer(300)
+print_ln('Adding noise and outputting results...')
+
+sigma = sfix(sigma_int) / sfix(10000.0)
+
+# Vectorized Noise Generation
+noise_1way_features = get_gaussian_value(size=(num_genes * 4))
+noise_1way_labels = get_gaussian_value(size=num_classes)
+
+sigma_2way = 1.0 / num_genes / 2.0 if target_delta == 0 else sigma
+noise_2way = get_gaussian_value(size=(num_genes * 4 * num_classes))
+
+print_ln('=== MARGINALS_OUTPUT_START ===')
+print_ln('1WAY_FEATURES:')
+for g in range(num_genes):
+    for f in range(4):
+        noisy_count = sfix(real_counts[g][f]) + (sigma * noise_1way_features[(g * 4) + f])
+        print_ln('%s', noisy_count.reveal())
+
+print_ln('1WAY_LABELS:')
+for i in range(num_classes):
+    noisy_label = sfix(real_counts_l[i]) + (sigma * noise_1way_labels[i])
+    print_ln('%s', noisy_label.reveal())
+
+print_ln('2WAY:')
+for g in range(num_genes):
+    for k in range(4 * num_classes):
+        noisy_2way = sfix(real_counts_2way[g][k]) + (sigma_2way * noise_2way[(g * 4 * num_classes) + k])
+        print_ln('%s', noisy_2way.reveal())
+print_ln('=== MARGINALS_OUTPUT_END ===')
+
+# Calculate final Means
+noise_means = get_gaussian_value(size=(num_genes * 4))
+sigma_mean = sfix(0) # Per your original setup
+
+print_ln('=== BIN_MEANS_START ===')
+for g in range(num_genes):
+    for f in range(4):
+        count_sfix = sfix(real_counts[g][f])
+        # Prevent division by zero if a bin is perfectly empty
+        safe_count = count_sfix + (count_sfix == 0.0) 
+        
+        mean_val = bin_sums[g][f] / safe_count
+        mean_val += sigma_mean * noise_means[(g * 4) + f]
+        print_ln('%s', mean_val.reveal())
+print_ln('=== BIN_MEANS_END ===')
+
+stop_timer(300)
+print_ln('Complete!')
+

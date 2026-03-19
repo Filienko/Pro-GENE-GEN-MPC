@@ -1,0 +1,139 @@
+# Program: log_bin_marginals.mpc
+# Description: Computes marginals from pre-binned integer data (0,1,2,3)
+# Fix: Uses Array for noise vectors to support runtime indexing in @for_range_opt
+
+from Compiler.library import print_ln, start_timer, stop_timer, for_range_opt
+from Compiler.types import sfix, sint, Array
+
+# --- ARGS ---
+num_patients_0 = int(program.args[1])
+num_patients_1 = int(program.args[2])
+num_genes = int(program.args[3])
+num_classes = int(program.args[4])
+sigma_int = int(program.args[5])
+
+N = num_patients_0 + num_patients_1
+num_bins = 4
+
+# --- SETUP ---
+print_ln(">> Starting Log-Bin Marginals (Integer Mode)")
+print_ln("   N=%s, Genes=%s, Classes=%s", N, num_genes, num_classes)
+
+sfix.set_precision(16, 64)
+
+# --- INPUTS ---
+data_0 = sint.Matrix(num_patients_0, num_genes + 1)
+data_1 = sint.Matrix(num_patients_1, num_genes + 1)
+
+print_ln(">> Reading Integer Inputs...")
+data_0.input_from(0)
+data_1.input_from(1)
+
+# Combine Data
+data = sint.Matrix(N, num_genes + 1)
+@for_range_opt(num_patients_0)
+def _(i):
+    data[i] = data_0[i]
+
+@for_range_opt(num_patients_1)
+def _(i):
+    data[i + num_patients_0] = data_1[i]
+
+# --- COMPUTE MARGINALS ---
+start_timer(100)
+print_ln(">> Computing Marginals...")
+
+real_counts = sint.Matrix(num_genes, num_bins)       
+real_counts_l = sint.Array(num_classes)              
+real_counts_2way = sint.Matrix(num_genes, num_bins * num_classes) 
+
+real_counts.assign_all(0)
+real_counts_l.assign_all(0)
+real_counts_2way.assign_all(0)
+
+@for_range_opt(N)
+def _(i):
+    label_val = data[i][num_genes]
+    label_vec = sint.Array(num_classes)
+    
+    @for_range_opt(num_classes)
+    def _(c):
+        is_c = (label_val == c)
+        label_vec[c] = is_c
+        real_counts_l[c] = real_counts_l[c] + is_c
+
+    @for_range_opt(num_genes)
+    def _(g):
+        val = data[i][g] 
+        bin_vec = sint.Array(num_bins)
+        
+        @for_range_opt(num_bins)
+        def _(b):
+            is_bin = (val == b)
+            bin_vec[b] = is_bin
+            
+            real_counts[g][b] = real_counts[g][b] + is_bin
+            
+            base_idx = b * num_classes
+            @for_range_opt(num_classes)
+            def _(c):
+                real_counts_2way[g][base_idx + c] += (is_bin * label_vec[c])
+
+stop_timer(100)
+
+# --- ADD NOISE & REVEAL ---
+start_timer(200)
+print_ln(">> Adding DP Noise...")
+
+sigma = sfix(sigma_int) / sfix(10000.0)
+
+@vectorize
+def get_gaussian_noise():
+    sum_u = sfix(0)
+    for _ in range(12):
+        sum_u += sfix.get_random(0, 1)
+    return sum_u - 6
+
+print_ln('=== MARGINALS_OUTPUT_START ===')
+
+# 1-Way Features
+print_ln('1WAY_FEATURES:')
+# FIX: Move vector to Array (RAM) to allow runtime indexing 'g'
+noise_1way = Array.create_from(get_gaussian_noise(size=(num_genes * num_bins)))
+
+@for_range_opt(num_genes)
+def _(g):
+    @for_range_opt(num_bins)
+    def _(b):
+        # Accessing Array with runtime index 'g' is now valid
+        noisy = sfix(real_counts[g][b]) + (sigma * noise_1way[g * num_bins + b])
+        print_ln('%s', noisy.reveal())
+
+# 1-Way Labels
+print_ln('1WAY_LABELS:')
+noise_labels = Array.create_from(get_gaussian_noise(size=num_classes))
+
+@for_range_opt(num_classes)
+def _(c):
+    noisy = sfix(real_counts_l[c]) + (sigma * noise_labels[c])
+    print_ln('%s', noisy.reveal())
+
+# 2-Way
+print_ln('2WAY:')
+sigma_2way = sigma 
+noise_2way = Array.create_from(get_gaussian_noise(size=(num_genes * num_bins * num_classes)))
+
+@for_range_opt(num_genes)
+def _(g):
+    @for_range_opt(num_bins * num_classes)
+    def _(k):
+        noisy = sfix(real_counts_2way[g][k]) + (sigma_2way * noise_2way[g * (num_bins*num_classes) + k])
+        print_ln('%s', noisy.reveal())
+
+print_ln('=== MARGINALS_OUTPUT_END ===')
+print_ln('=== BIN_MEANS_START ===')
+print_ln('=== BIN_MEANS_END ===')
+
+stop_timer(200)
+print_ln(">> Protocol Complete")
+

@@ -1,0 +1,86 @@
+from Compiler.library import for_range_opt, print_ln
+from Compiler.types import sfix, cfix, Array, Matrix
+
+num_patients_0 = int(program.args[1])
+num_patients_1 = int(program.args[2])
+num_genes = int(program.args[3])
+num_classes = int(program.args[4])
+sigma = cfix(float(program.args[5]))
+N = num_patients_0 + num_patients_1
+
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+data_0.input_from(0)
+data_1.input_from(1)
+
+train_data_T = sfix.Matrix(num_genes, N)
+train_labels = sfix.Array(N)
+
+data_0_T = data_0.transpose()
+data_1_T = data_1.transpose()
+
+train_labels.assign_vector(data_0_T[num_genes].get_vector(), base=0)
+train_labels.assign_vector(data_1_T[num_genes].get_vector(), base=num_patients_0)
+
+@for_range_opt(num_genes)
+def _(j):
+    train_data_T[j].assign_vector(data_0_T[j].get_vector(), base=0)
+    train_data_T[j].assign_vector(data_1_T[j].get_vector(), base=num_patients_0)
+
+ones_vec = sfix.Array(N)
+ones_vec.assign_all(1)
+
+def get_gaussian_vector(size):
+    sum_u = sfix.Array(size)
+    sum_u.assign_all(0)
+    for _ in range(12):
+        sum_u += sfix.get_random(0, 1, size=size)
+    return sum_u - 6
+
+def get_indicator_math_vectorized(val_vec, target, total_vals):
+    terms = []
+    for m in range(total_vals):
+        if m != target:
+            terms.append((val_vec - m) / (target - m))
+    res = terms[0]
+    for t in terms[1:]:
+        res = res * t
+    return res
+
+real_counts = sfix.Matrix(num_genes, 4)
+real_counts_l = sfix.Array(num_classes)
+real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)
+
+print_ln('Running Optimized Vectorized Marginals...')
+
+label_is_vecs = []
+val_s = train_labels.get_vector()
+
+for l in range(num_classes):
+    l_arr = sfix.Array(N)
+    l_arr.assign_vector(get_indicator_math_vectorized(val_s, l, num_classes))
+    label_is_vecs.append(l_arr)
+    real_counts_l[l] = sfix.dot_product(l_arr, ones_vec)
+
+@for_range_opt(num_genes)
+def _(j):
+    val_r = train_data_T[j].get_vector()
+
+    for f in range(4):
+        g_arr = sfix.Array(N)
+        g_arr.assign_vector(get_indicator_math_vectorized(val_r, f, 4))
+        
+        real_counts[j][f] = sfix.dot_product(g_arr, ones_vec)
+        feat_idx = f * num_classes
+        for c in range(num_classes):
+            real_counts_2way[j][feat_idx + c] = sfix.dot_product(g_arr, label_is_vecs[c])
+
+noise_1way_features = get_gaussian_vector(size=(num_genes * 4))
+noise_1way_labels = get_gaussian_vector(size=num_classes)
+
+real_counts.assign_vector(real_counts.get_vector() + (sigma * noise_1way_features.get_vector()))
+real_counts_l.assign_vector(real_counts_l.get_vector() + (sigma * noise_1way_labels.get_vector()))
+
+sigma_2way = cfix(1.0 / num_genes / 2.0)
+noise_2way = get_gaussian_vector(size=(num_genes * 4 * num_classes))
+real_counts_2way.assign_vector(real_counts_2way.get_vector() + (sigma_2way * noise_2way.get_vector()))

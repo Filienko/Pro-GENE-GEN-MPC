@@ -47,7 +47,7 @@ class MPCProtocolExecutor:
     of .mpc files for secure multi-party computation.
     """
 
-    def __init__(self, mpspdz_path=None, protocol="ring", working_dir=None):
+    def __init__(self, mpspdz_path=None, protocol="ring", working_dir=None, port=None):
         """
         Initialize MPC Protocol Executor
 
@@ -55,10 +55,14 @@ class MPCProtocolExecutor:
             mpspdz_path: Path to MP-SPDZ installation (default: /home/mpcuser/MP-SPDZ/)
             protocol: MPC protocol to use (default: ring)
             working_dir: Working directory for MPC execution (default: current directory)
+            port: Base port number passed as -pn to party executables via the shell script.
+                  When None the MP-SPDZ default (5000) is used.  Set to a unique value per
+                  concurrent run to avoid port conflicts (e.g. 5000, 5100, 5200 …).
         """
         self.mpspdz_path = mpspdz_path or os.environ.get('MPSPDZ_PATH', '/home/mpcuser/MP-SPDZ/')
         self.protocol = protocol
         self.working_dir = working_dir or os.getcwd()
+        self.port = port
 
     def compile_protocol(self, mpc_file, args=None):
         protocol_name = mpc_file.replace('.mpc', '')
@@ -71,6 +75,10 @@ class MPCProtocolExecutor:
         start_time = time.time()
         # Changed from os.system to subprocess.run to capture the text output
         result = subprocess.run(compile_cmd, shell=True, capture_output=True, text=True)
+        print("--- MP-SPDZ STDOUT ---")
+        print(result.stdout)
+        print("--- MP-SPDZ STDERR ---")
+        print(result.stderr)
         MPC_METRICS['compile_time'] += (time.time() - start_time)
 
         if result.returncode == 0:
@@ -96,11 +104,19 @@ class MPCProtocolExecutor:
         protocol_script = os.path.join(self.mpspdz_path, 'Scripts', f'{self.protocol}.sh')
         full_protocol_name = protocol_name + "-" + "-".join([str(arg) for arg in args]) if args else protocol_name
         cmd = [protocol_script, full_protocol_name]
+        if self.port is not None:
+            # Passed as trailing args to the shell script so each party receives
+            # -pn <port>, overriding the default base port (5000).  This is the
+            # standard MP-SPDZ mechanism for running multiple instances on one host.
+            cmd += ['-pn', str(self.port)]
         try:
             start_time = time.time()
             result = subprocess.run(cmd, cwd=self.mpspdz_path, capture_output=True, text=True, check=True)
             MPC_METRICS['execute_time'] += (time.time() - start_time)
-            
+            print("--- MP-SPDZ STDOUT ---")
+            print(result.stdout)
+            print("--- MP-SPDZ STDERR ---")
+            print(result.stderr)
             # --- NEW: PARSE DATA SENT ---
             # Search both stdout and stderr just in case MP-SPDZ routes it differently
             combined_output = result.stdout + result.stderr
@@ -210,15 +226,16 @@ class MPCBinningComputer:
     Performs secure binning using MPC protocols
     """
 
-    def __init__(self, mpspdz_path=None, protocol="ring"):
+    def __init__(self, mpspdz_path=None, protocol="ring", port=None):
         """
         Initialize MPC Binning Computer
 
         Args:
             mpspdz_path: Path to MP-SPDZ installation
             protocol: MPC protocol to use
+            port: Base port number for MP-SPDZ parties (None = use default 5000)
         """
-        self.executor = MPCProtocolExecutor(mpspdz_path, protocol)
+        self.executor = MPCProtocolExecutor(mpspdz_path, protocol, port=port)
         self.splitter = HorizontalDataSplitter(num_parties=2)
 
     def _parse_binned_output(self, stdout):
@@ -255,10 +272,10 @@ class MPCBinningComputer:
         return binned_data
 
 class MPCMarginalComputer:
-    def __init__(self, mpspdz_path=None, protocol="ring"):
-        self.executor = MPCProtocolExecutor(mpspdz_path, protocol)
+    def __init__(self, mpspdz_path=None, protocol="ring", port=None):
+        self.executor = MPCProtocolExecutor(mpspdz_path, protocol, port=port)
         self.splitter = HorizontalDataSplitter(num_parties=2)
-        self.binner = MPCBinningComputer(mpspdz_path, protocol)
+        self.binner = MPCBinningComputer(mpspdz_path, protocol, port=port)
 
     def compute_marginals_with_binning(self, party_data_files, num_genes,
                                        num_classes, target_delta, sigma, sigma_bin,

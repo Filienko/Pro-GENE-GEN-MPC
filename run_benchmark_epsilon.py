@@ -22,18 +22,18 @@ def compute_histogram_intersection(real_df, synth_df, bins=20):
     for col in real_df.columns:
         min_val = min(real_df[col].min(), synth_df[col].min())
         max_val = max(real_df[col].max(), synth_df[col].max())
-        
+
         if min_val == max_val:
             scores.append(1.0 if real_df[col].mean() == synth_df[col].mean() else 0.0)
             continue
 
         real_hist, _ = np.histogram(real_df[col], bins=bins, range=(min_val, max_val), density=True)
         synth_hist, _ = np.histogram(synth_df[col], bins=bins, range=(min_val, max_val), density=True)
-        
+
         bin_width = (max_val - min_val) / bins
         real_prob = real_hist * bin_width
         synth_prob = synth_hist * bin_width
-        
+
         intersection = np.sum(np.minimum(real_prob, synth_prob))
         scores.append(intersection)
     return float(np.mean(scores))
@@ -46,37 +46,37 @@ def compute_dcr(real_df, synth_df, k=1):
 def compute_differential_expression_tpr(X_real, y_real, X_synth, y_synth, p_val_thresh=0.05):
     classes = np.unique(y_real)
     if len(classes) < 2: return 0.0
-    
+
     tpr_list = []
     for i in range(len(classes)):
         for j in range(i+1, len(classes)):
             c1, c2 = classes[i], classes[j]
-            
+
             real_c1 = X_real[y_real == c1]
             real_c2 = X_real[y_real == c2]
             synth_c1 = X_synth[y_synth == c1]
             synth_c2 = X_synth[y_synth == c2]
-            
+
             if len(real_c1) == 0 or len(real_c2) == 0 or len(synth_c1) == 0 or len(synth_c2) == 0:
                 continue
-                
+
             real_degs_up, real_degs_down = set(), set()
             for col in X_real.columns:
                 stat, p = ranksums(real_c1[col], real_c2[col])
                 if p < p_val_thresh:
                     if stat > 0: real_degs_up.add(col)
                     else: real_degs_down.add(col)
-                    
+
             if not real_degs_up and not real_degs_down:
                 continue
-                
+
             synth_degs_up, synth_degs_down = set(), set()
             for col in X_synth.columns:
                 stat, p = ranksums(synth_c1[col], synth_c2[col])
                 if p < p_val_thresh:
                     if stat > 0: synth_degs_up.add(col)
                     else: synth_degs_down.add(col)
-                    
+
             if real_degs_up:
                 tpr_up = len(real_degs_up.intersection(synth_degs_up)) / len(real_degs_up)
                 tpr_list.append(tpr_up)
@@ -89,16 +89,16 @@ def compute_differential_expression_tpr(X_real, y_real, X_synth, y_synth, p_val_
 def compute_coexpression_tpr(X_real, X_synth, threshold=0.7):
     corr_real = X_real.corr(method='pearson').fillna(0).values
     corr_synth = X_synth.corr(method='pearson').fillna(0).values
-    
+
     triu_idx = np.triu_indices_from(corr_real, k=1)
-    
+
     edges_real = (np.abs(corr_real[triu_idx]) > threshold)
     edges_synth = (np.abs(corr_synth[triu_idx]) > threshold)
-    
+
     real_edge_count = np.sum(edges_real)
     if real_edge_count == 0:
         return 0.0
-        
+
     true_positives = np.sum(edges_real & edges_synth)
     return float(true_positives / real_edge_count)
 
@@ -109,7 +109,7 @@ def compute_1d_marginals_and_zero_rates(real_df, synth_df):
     mean_synth = synth_df.replace(0, np.nan).mean().fillna(0)
     def mare(a, b):
         denom = np.maximum(a, b)
-        denom[denom == 0] = 1e-9 
+        denom[denom == 0] = 1e-9
         return (np.abs(a - b) / denom).mean()
     return float(mare(z_real, z_synth)), float(mare(mean_real, mean_synth))
 
@@ -125,20 +125,24 @@ def compute_correlation_diff(real_df, synth_df):
     return float(np.mean(np.abs(corr_real - corr_synth)))
 
 def compute_lr_feature_importance_agreement(X_real, y_real, X_synth, y_synth, top_k=50):
+    # SAFETY CHECK: Prevent crash if synthetic data collapsed to 1 class
+    if len(np.unique(y_real)) < 2 or len(np.unique(y_synth)) < 2:
+        return np.nan, np.nan
+
     clf_real = LogisticRegression(max_iter=2000, random_state=42).fit(X_real, y_real)
     clf_synth = LogisticRegression(max_iter=2000, random_state=42).fit(X_synth, y_synth)
-    
+
     imp_real = np.mean(np.abs(clf_real.coef_), axis=0) if len(clf_real.classes_) > 2 else np.abs(clf_real.coef_[0])
     imp_synth = np.mean(np.abs(clf_synth.coef_), axis=0) if len(clf_synth.classes_) > 2 else np.abs(clf_synth.coef_[0])
-    
+
     tau, _ = kendalltau(imp_real, imp_synth)
     tau = float(tau) if not np.isnan(tau) else 0.0
-    
+
     k_actual = min(top_k, len(imp_real))
     top_real_idx = set(np.argsort(imp_real)[-k_actual:])
     top_synth_idx = set(np.argsort(imp_synth)[-k_actual:])
     overlap_score = len(top_real_idx.intersection(top_synth_idx)) / k_actual
-    
+
     return float(tau), float(overlap_score)
 
 def compute_cluster_preservation(X_real, y_real, X_synth, y_synth):
@@ -154,22 +158,22 @@ def compute_baseline_metrics(train_df, test_df):
     y_train = train_df['label']
     X_test  = test_df.drop(columns=['label'])
     y_test  = test_df['label']
-    
+
     clf = LogisticRegression(max_iter=2000, random_state=42)
     clf.fit(X_train, y_train)
-    
+
     y_pred = clf.predict(X_test)
-    
+
     acc = accuracy_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred, average='weighted')
-        
+
     return float(acc), float(f1)
 
 # ==========================================
 # MAIN BENCHMARK PIPELINE
 # ==========================================
 
-def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons, n_runs=1):
+def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons, n_runs=1, prefix="", port=None):
     print(f"Loading full dataset from {full_data_path}...")
     df = pd.read_csv(full_data_path)
 
@@ -187,14 +191,15 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
 
     y = df[label_column]
     X = df.drop(columns=[label_column])
-    # subset_features = X.sample(n=5, axis=1).columns
-    # X = X[subset_features].copy()
-
+    X = X.sample(n=100, axis=1, random_state=42)
     n_total_features = X.shape[1]
     print(f"Dataset loaded. Total genes/features to use: {n_total_features}")
 
+    # Create directory for saving generated synthetic datasets
+    os.makedirs("saved_synthetic_data", exist_ok=True)
+
     results = []
-    raw_log_file = "benchmark_epsilon_RAW_log.csv"
+    raw_log_file = f"{prefix}benchmark_epsilon_RAW_log.csv"
 
     for current_protocol in protocols:
         for current_eps in epsilons:
@@ -210,7 +215,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
 
             for run_id in range(n_runs):
                 print(f"\n--- [Protocol: {current_protocol} | Epsilon: {current_eps}] Run {run_id + 1}/{n_runs} ---")
-                
+
                 # Deterministic split per run_id
                 current_seed = 42 + run_id
 
@@ -223,10 +228,10 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
 
                 print(f"--- Computing real-data baseline for this split ---")
                 base_acc, base_f1 = compute_baseline_metrics(train_df, test_df)
-                
-                party1_path = f"tmp_p1_eps{current_eps}_{current_protocol}_run{run_id}.csv"
-                party2_path = f"tmp_p2_eps{current_eps}_{current_protocol}_run{run_id}.csv"
-                synth_out_path = f"tmp_synthetic_eps{current_eps}_{current_protocol}_run{run_id}.csv"
+
+                party1_path = f"{prefix}tmp_p1_eps{current_eps}_{current_protocol}_run{run_id}.csv"
+                party2_path = f"{prefix}tmp_p2_eps{current_eps}_{current_protocol}_run{run_id}.csv"
+                synth_out_path = f"{prefix}tmp_synthetic_eps{current_eps}_{current_protocol}_run{run_id}.csv"
 
                 mpc_helper.MPC_METRICS = {
                     'compile_time': 0.0, 'execute_time': 0.0, 'data_sent_mb': 0.0,
@@ -241,13 +246,21 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                     synth_df = run_secure_mpc_pipeline(
                         party_files=[party1_path, party2_path],
                         output_path=synth_out_path,
-                        epsilon=current_eps,      
+                        epsilon=current_eps,
                         delta=1e-5,
                         marginal_protocol='ppai_bin_wo_dp_msr_opt',
                         mpspdz_path=mpspdz_path,
-                        mpc_protocol=current_protocol
+                        mpc_protocol=current_protocol,
+                        port=port
                     )
                     
+                    # ------------------------------------------------------------
+                    # NEW: Save a permanent copy of the synthetic data for this run
+                    # ------------------------------------------------------------
+                    perm_synth_path = f"saved_synthetic_data/{prefix}synth_eps{current_eps}_{current_protocol}_run{run_id}.csv"
+                    synth_df.to_csv(perm_synth_path, index=False)
+                    print(f"  -> Successfully saved synthetic dataset to: {perm_synth_path}")
+
                     print(f"--- Evaluating Downstream Utility & Fidelity ---")
                     X_train_real = train_df.drop(columns=['label'])
                     y_train_real = train_df['label']
@@ -256,13 +269,20 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                     X_test = test_df.drop(columns=['label'])
                     y_test = test_df['label']
 
-                    # Downstream ML Metrics (Logistic Regression, No AUC)
-                    clf = LogisticRegression(max_iter=2000, random_state=42)
-                    clf.fit(X_train_synth, y_train_synth)
-                    y_pred = clf.predict(X_test)
-                    
-                    acc = accuracy_score(y_test, y_pred)
-                    f1 = f1_score(y_test, y_pred, average='weighted')
+                    # ------------------------------------------------------------
+                    # SAFETY CHECK: Downstream ML Metrics (Logistic Regression, No AUC)
+                    # ------------------------------------------------------------
+                    if len(np.unique(y_train_synth)) < 2:
+                        print(f"  -> [Warning] PGM collapsed labels to 1 class. Skipping ML eval to prevent crash.")
+                        acc = np.nan
+                        f1 = np.nan
+                    else:
+                        clf = LogisticRegression(max_iter=2000, random_state=42)
+                        clf.fit(X_train_synth, y_train_synth)
+                        y_pred = clf.predict(X_test)
+
+                        acc = accuracy_score(y_test, y_pred)
+                        f1 = f1_score(y_test, y_pred, average='weighted')
 
                     # Fidelity Metrics
                     hist_intersect = compute_histogram_intersection(X_train_real, X_train_synth)
@@ -281,15 +301,15 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                     metrics['protocol'] = current_protocol
                     metrics['epsilon'] = current_eps
                     metrics['num_features'] = n_total_features
-                    
+
                     # Baselines
                     metrics['base_accuracy'] = base_acc
                     metrics['base_f1'] = base_f1
-                    
+
                     # Synthetic ML Eval
                     metrics['accuracy'] = acc
                     metrics['f1_score'] = f1
-                    
+
                     # Statistical & Biological Fidelity
                     metrics['hist_intersection'] = hist_intersect
                     metrics['dcr_knn'] = dcr_knn
@@ -305,7 +325,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                     metrics['ari_synth'] = ari_synth
 
                     run_metrics_list.append(metrics)
-                    
+
                     # INCREMENTAL SAVE
                     raw_df = pd.DataFrame([metrics])
                     if not os.path.isfile(raw_log_file):
@@ -332,7 +352,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                 'epsilon': current_eps,
                 'num_features': n_total_features
             }
-            
+
             keys_to_avg = [
                 'base_accuracy', 'base_f1',
                 'accuracy', 'f1_score',
@@ -376,15 +396,15 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
 
     results_df = pd.DataFrame(results)[cols]
     print(results_df.to_string(index=False))
-    
+
     # Save a distinct Averaged CSV for each requested protocol
     for current_protocol in protocols:
         protocol_df = results_df[results_df['protocol'] == current_protocol]
         if not protocol_df.empty:
-            out_filename = f"benchmark_epsilon_avg_{current_protocol}.csv"
+            out_filename = f"{prefix}benchmark_epsilon_avg_{current_protocol}.csv"
             protocol_df.to_csv(out_filename, index=False)
             print(f"✓ Averaged results for {current_protocol} saved to: {out_filename}")
-            
+
     print(f"✓ Raw un-averaged results with all intermediate runs safely preserved in: {raw_log_file}")
 
 if __name__ == "__main__":
@@ -395,14 +415,20 @@ if __name__ == "__main__":
     parser.add_argument('--runs', type=int, default=3, help='Number of DP estimation runs to average')
     parser.add_argument('--protocols', nargs='+', default=['ring', 'mal-rep-ring'], help='List of MP-SPDZ protocols to test')
     parser.add_argument('--epsilons', nargs='+', type=float, default=[1.0, 2.0, 5.0, 7.0, 10.0, 100.0], help='List of Epsilon values to test')
-    
+    parser.add_argument('--prefix', type=str, default='', help='Prefix for all output filenames (enables concurrent runs)')
+    parser.add_argument('--port', type=int, default=None,
+                        help='Base port for MP-SPDZ parties (-pn flag). Set to a unique value '
+                             'per concurrent run (e.g. 5000, 5100, 5200) to avoid port conflicts.')
+
     args = parser.parse_args()
 
     run_benchmark(
-        full_data_path=args.data, 
-        label_column=args.label, 
-        mpspdz_path=args.mpspdz, 
+        full_data_path=args.data,
+        label_column=args.label,
+        mpspdz_path=args.mpspdz,
         protocols=args.protocols,
         epsilons=args.epsilons,
-        n_runs=args.runs
+        n_runs=args.runs,
+        prefix=args.prefix,
+        port=args.port
     )

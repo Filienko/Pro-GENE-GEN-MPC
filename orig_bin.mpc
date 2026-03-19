@@ -1,0 +1,89 @@
+import math
+from Compiler.library import print_ln
+from Compiler.types import sfix, cfix, Array, Matrix
+
+num_patients_0 = int(program.args[1])
+num_patients_1 = int(program.args[2])
+num_genes = int(program.args[3])
+num_classes = int(program.args[4])
+sigma = cfix(float(program.args[5]))
+N = num_patients_0 + num_patients_1
+qtls = [0.25, 0.5, 0.75]
+
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+data_0.input_from(0)
+data_1.input_from(1)
+
+data = sfix.Matrix(N, num_genes+1)
+for i in range(num_patients_0):
+    for j in range(num_genes+1):
+        data[i][j] = data_0[i][j]
+for i in range(num_patients_1):
+    for j in range(num_genes+1):
+        data[i + num_patients_0][j] = data_1[i][j]
+
+def NormalSampler():
+   sum_u = 0
+   for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+   sum_u = sum_u - 6
+   return sum_u
+
+def bin_column(gene_col, n):
+    gene1_q = Array.create_from(gene_col)
+    gene1_q.sort()
+    
+    Q = sfix.Array(len(qtls))
+    k = 0
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1: Q[k] = gene1_q[0]
+        elif pos >= n: Q[k] = gene1_q[n-1]
+        else: Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k += 1
+
+    gene1_q = Array.create_from(gene_col)
+    for i in range(n):
+        x = gene_col[i]
+        c0 = (x < Q[0])
+        c1 = (x < Q[1])
+        c2 = (x < Q[2])
+        gene_col[i] = 3 - c2 - c1 - c0
+        
+    mean = sfix.Array(4)
+    count = sfix.Array(4)
+    mean.assign_all(0)
+    count.assign_all(0)
+
+    for i in range(n):
+        for b in range(4):
+            c = (gene_col[i] == b)
+            mean[b] = mean[b] + c * gene1_q[i]
+            count[b] = count[b] + c
+
+    sigma = sfix(1.5)
+    for i in range(len(mean)):
+        mean[i] = mean[i]/count[i]
+        mean[i] = mean[i] + sigma * NormalSampler()
+
+    return gene_col, mean
+
+print_ln('Running Original Binning...')
+mean_matrix = sfix.Matrix(num_genes, 4)
+
+for j in range(num_genes):
+    gene1 = sfix.Array(N)
+    for p in range(N):
+        gene1[p] = data[p][j]
+        
+    binned, mean1 = bin_column(gene1, N)
+    
+    for b in range(4):
+        mean_matrix[j][b] = mean1[b]
+        
+    for p in range(N):
+        data[p][j] = binned[p]
+
