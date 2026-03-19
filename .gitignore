@@ -15,8 +15,12 @@ eval/stats_eval/margctgan
 eval/stats_eval/results
 mpc_spdz_*
 
+# Intermediate
 *.save
 *.png
+*.log
+logs/
+tables/
 
 # Python cache files
 __pycache__/

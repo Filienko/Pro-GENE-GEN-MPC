@@ -1,0 +1,73 @@
+import math
+from Compiler.library import for_range_opt, print_ln
+from Compiler.types import sfix, cfix, Array, Matrix
+
+num_patients_0 = int(program.args[1])
+num_patients_1 = int(program.args[2])
+num_genes = int(program.args[3])
+num_classes = int(program.args[4])
+sigma = cfix(float(program.args[5]))
+N = num_patients_0 + num_patients_1
+qtls = [0.25, 0.5, 0.75]
+
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+data_0.input_from(0)
+data_1.input_from(1)
+
+train_data_T = sfix.Matrix(num_genes, N)
+data_0_T = data_0.transpose()
+data_1_T = data_1.transpose()
+
+@for_range_opt(num_genes)
+def _(j):
+    train_data_T[j].assign_vector(data_0_T[j].get_vector(), base=0)
+    train_data_T[j].assign_vector(data_1_T[j].get_vector(), base=num_patients_0)
+
+ones_vec = sfix.Array(N)
+ones_vec.assign_all(1)
+
+gene1_q = sfix.Array(N)
+binned_gene = sfix.Array(N)
+Q = sfix.Array(len(qtls))
+mean = sfix.Array(4)
+count = sfix.Array(4)
+c_vec = sfix.Array(N)
+
+def bin_column_vectorized(gene_col, n):
+    gene1_q.assign(gene_col)
+    gene1_q.sort()
+
+    k = 0
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1: Q[k] = gene1_q[0]
+        elif pos >= n: Q[k] = gene1_q[n-1]
+        else: Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k += 1
+
+    v_col = gene_col.get_vector()
+    c0 = (v_col < Q[0])
+    c1 = (v_col < Q[1])
+    c2 = (v_col < Q[2])
+    
+    binned_gene.assign_vector(3 - c2 - c1 - c0)
+    binned_vec = binned_gene.get_vector()
+
+    for b in range(4):
+        c_vec.assign_vector(binned_vec == b)
+        count[b] = sfix.dot_product(c_vec, ones_vec)
+        mean[b] = sfix.dot_product(c_vec, gene_col) / count[b]
+
+    return binned_gene, mean
+
+print_ln('Running Optimized Vectorized Binning...')
+mean_matrix = sfix.Matrix(num_genes, 4)
+
+@for_range_opt(num_genes)
+def _(j):
+    binned_result, mean_result = bin_column_vectorized(train_data_T[j], N)
+    mean_matrix[j].assign(mean_result)
+    train_data_T[j].assign(binned_result)

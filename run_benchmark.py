@@ -410,6 +410,7 @@ if __name__ == "__main__":
     parser.add_argument('--mpspdz', type=str, required=True)
     parser.add_argument('--runs', type=int, default=3, help='Number of DP estimation runs to average')
     parser.add_argument('--protocols', nargs='+', default=['ring', 'mal-rep-ring'], help='List of MP-SPDZ protocols to test')
+    parser.add_argument('--features', type=int, nargs='+', default=[200, 500, 800, 1000])
     parser.add_argument('--prefix', type=str, default='', help='Prefix for all output filenames (enables concurrent runs)')
     parser.add_argument('--port', type=int, default=None,
                         help='Base port for MP-SPDZ parties (-pn flag). Set to a unique value '
@@ -421,7 +422,7 @@ if __name__ == "__main__":
         label_column=args.label,
         mpspdz_path=args.mpspdz,
         protocols=args.protocols,
-        feature_sizes=[200, 500, 800, 1000],
+        feature_sizes=args.features,
         n_runs=args.runs,
         prefix=args.prefix,
         port=args.port

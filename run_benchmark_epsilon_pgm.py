@@ -428,7 +428,7 @@ if __name__ == "__main__":
     )
     parser.add_argument('--data', type=str, required=True, help='Path to dataset CSV')
     parser.add_argument('--label', type=str, required=True, help='Name of label column')
-    parser.add_argument('--epsilons', nargs='+', type=float, default=[1.0, 2.0, 5.0, 7.0, 10.0, 100.0],
+    parser.add_argument('--epsilons', nargs='+', type=float, default=[1.0, 2.0, 5.0, 7.0, 10.0],
                         help='List of epsilon values to test')
     parser.add_argument('--delta', type=float, default=1e-5, help='DP delta (default: 1e-5)')
     parser.add_argument('--runs', type=int, default=3, help='Number of runs to average')

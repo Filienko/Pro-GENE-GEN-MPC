@@ -27,7 +27,7 @@ print_ln('Aligning and transposing data matrices...')
 train_data_T = sfix.Matrix(num_genes, N)
 train_labels = sfix.Array(N)
 
-# Natively transpose the source matrices 
+# Natively transpose the source matrices
 data_0_T = data_0.transpose()
 data_1_T = data_1.transpose()
 
@@ -42,10 +42,6 @@ def _(j):
     train_data_T[j].assign_vector(data_1_T[j].get_vector(), base=num_patients_0)
 
 ############# Vectorized Helpers #############
-
-# Create an array of 1s to replace sum() with dot_product()
-ones_vec = sfix.Array(N)
-ones_vec.assign_all(1)
 
 def get_gaussian_vector(size):
     """Generates an array of Irwin-Hall approximated Gaussian noise."""
@@ -71,7 +67,7 @@ def bin_column_vectorized(gene_col, n):
         if pos < 1:
             Q[k] = gene1_q[0]
         elif pos >= n:
-            Q[k] = gene1_q[n-1] # Fixed out-of-bounds index
+            Q[k] = gene1_q[n-1] 
         else:
             Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
         k = k+1
@@ -87,8 +83,8 @@ def bin_column_vectorized(gene_col, n):
 
     for b in range(4):
         c_vec = (binned_gene == b)
-        # Replaced Python sum() with native MPC dot product to prevent unrolling
-        count[b] = sfix.dot_product(c_vec, ones_vec) 
+        
+        count[b] = sum(c_vec.get_vector())
         mean[b] = sfix.dot_product(c_vec, gene_col) / count[b]
 
     return binned_gene, mean
@@ -123,12 +119,14 @@ label_is_vecs = []
 for l in range(num_classes):
     l_vec = (train_labels == l)
     label_is_vecs.append(l_vec)
-    real_counts_l[l] = sfix.dot_product(l_vec, ones_vec)
+    
+    # OPTIMIZATION: Local vector sum (0 communication)
+    real_counts_l[l] = sum(l_vec.get_vector())
 
 # Compute marginals column by column using runtime loop
 @for_range_opt(num_genes)
 def _(j):
-    val_r = train_data_T[j] 
+    val_r = train_data_T[j]
 
     r_minus_10 = 1 - val_r
     r_minus_1 = val_r - 1
@@ -141,16 +139,17 @@ def _(j):
     gene_is_vecs_1 = (val_r * r_minus_20 * r_minus_30) / 2
     gene_is_vecs_2 = (val_r * r_minus_1 * r_minus_30) / 2
     gene_is_vecs_3 = (val_r * r_minus_1 * r_minus_2) / 6
-    
+
     # Store in list for the loop below
     g_vecs = [gene_is_vecs_0, gene_is_vecs_1, gene_is_vecs_2, gene_is_vecs_3]
 
     for f in range(4):
-        # Replaced Python sum() with dot_product
-        real_counts[j][f] = sfix.dot_product(g_vecs[f], ones_vec)
+        # OPTIMIZATION: Local vector sum (0 communication)
+        real_counts[j][f] = sum(g_vecs[f].get_vector())
 
         feat_idx = f * num_classes
         for c in range(num_classes):
+            # NOTE: This one remains sfix.dot_product because BOTH operands are secret arrays
             real_counts_2way[j][feat_idx + c] = sfix.dot_product(g_vecs[f], label_is_vecs[c])
 
 stop_timer(300)
@@ -170,7 +169,6 @@ real_counts.assign_vector(flat_noisy_counts)
 real_counts_l.assign_vector(real_counts_l.get_vector() + (sigma * noise_1way_labels.get_vector()))
 
 # 2-way marginals noise
-# Since target_delta is 1e-5, the if statement below is skipped, keeping the original sigma.
 if target_delta == 0:
     sigma = 1.0 / num_genes / 2.0
 
@@ -217,4 +215,3 @@ print_ln('=== BIN_MEANS_END ===')
 
 stop_timer(500)
 print_ln('Complete!')
-

@@ -1,0 +1,253 @@
+import math
+import random
+from Compiler import ml
+from Compiler.library import vectorize, for_range_opt, print_ln, start_timer, stop_timer
+from Compiler.types import sfix, cfix, Array, Matrix
+
+############# Getting secret shares #############
+
+num_patients_0 = int(program.args[1]) #951
+num_patients_1 = int(program.args[2]) #950
+num_genes = int(program.args[3]) #958
+num_classes = int(program.args[4]) #5
+sigma = cfix(float(program.args[5])) 
+target_delta = 1e-5
+num_data_custodians = 2
+qtls = [0.25, 0.5, 0.75]
+
+N = num_patients_0 + num_patients_1
+
+data_0 = sfix.Matrix(num_patients_0, num_genes+1)
+data_1 = sfix.Matrix(num_patients_1, num_genes+1)
+data_0.input_from(0)
+data_1.input_from(1)
+
+############# Combined data & Transpose Trick #############
+print_ln('Running Pentyala et al. , PPAI 2024...')
+
+train_data = sfix.Matrix(N, num_genes)
+train_labels = sfix.Array(N)
+
+# --- THE FIX: Unoptimized manual combination without transpose ---
+for i in range(num_patients_0):
+    for j in range(num_genes):
+        train_data[i][j] = data_0[i][j]
+    train_labels[i] = data_0[i][num_genes]
+
+for i in range(num_patients_1):
+    for j in range(num_genes):
+        train_data[num_patients_0 + i][j] = data_1[i][j]
+    train_labels[num_patients_0 + i] = data_1[i][num_genes]
+# -----------------------------------------------------------------
+
+############# Vectorized Helpers #############
+
+def get_gaussian_vector(size):
+    """Generates an array of Irwin-Hall approximated Gaussian noise."""
+    sum_u = sfix.Array(size)
+    sum_u.assign_all(0)
+    for _ in range(12):
+        sum_u += sfix.get_random(0, 1, size=size)
+    return sum_u - 6
+
+def NormalSampler():
+   sum_u = 0
+   for _ in range(12):
+        sum_u = sum_u + sfix.get_random(0, 1)
+   sum_u = sum_u - 6
+   return sum_u
+
+def bin_column(gene_col, n):
+    """Not Vectorized binning operating on the whole N-sized array at once."""
+    gene1_q = Array.create_from(gene_col)
+    gene1_q.sort()
+
+    Q = sfix.Array(len(qtls))
+    k = 0
+    # Standard python loop is fine here because len(qtls) is only 3
+    for q in qtls:
+        pos = (n-1)*q
+        floor_p = math.floor(pos)
+        f = pos - floor_p
+        if pos < 1:
+            Q[k] = gene1_q[0]
+        elif pos >= n:
+            Q[k] = gene1_q[n-1]
+        else:
+            Q[k] = gene1_q[floor_p] + f * (gene1_q[floor_p+1] - gene1_q[floor_p])
+        k = k+1
+
+    # SIKHA 11/03 reverted back to for loops
+    gene1_q = Array.create_from(gene_col)
+    for i in range(n):
+            x = gene_col[i]
+            c0 = (x<Q[0])
+            c1 = (x<Q[1])
+            c2 = (x<Q[2])
+            gene_col[i] = 3-c2-c1-c0
+
+    mean = sfix.Array(4)
+    count = sfix.Array(4)
+    mean.assign_all(0)
+    count.assign_all(0)
+
+    for i in range(n):
+        for b in range(4): # Hardcoded to 4 to avoid unrolling crash
+            c = (gene_col[i] == b)
+            mean[b] = mean[b] + c * gene1_q[i]
+            count[b] = count[b] + c
+
+    return gene_col, mean
+
+############# STEP 1: BINNING (SECRET) #############
+start_timer(200)
+print_ln('Starting secure binning as per Pentyala et al. PPAI 2024...')
+
+mean_matrix = sfix.Matrix(num_genes, 4)
+
+# --- THE FIX: Manual column extraction since matrix is not transposed ---
+for j in range(num_genes):
+    gene_col = sfix.Array(N)
+    for p in range(N):
+        gene_col[p] = train_data[p][j]
+
+    binned_col, mean1 = bin_column(gene_col, N)
+
+    for b in range(4):
+        mean_matrix[j][b] = mean1[b]
+
+    for p in range(N):
+        train_data[p][j] = binned_col[p]
+# ------------------------------------------------------------------------
+
+stop_timer(200)
+print_ln('Binning complete')
+
+############# STEP 2: COMPUTE MARGINALS ON BINNED DATA (SECRET) #############
+start_timer(300)
+print_ln('Computing marginals on binned data as per Pentyala et al. PPAI 2024...')
+
+real_counts = sfix.Matrix(num_genes, 4)
+real_counts_l = sfix.Array(num_classes)
+real_counts_2way = sfix.Matrix(num_genes, 4 * num_classes)
+
+real_counts.assign_all(0)
+real_counts_l.assign_all(0)
+real_counts_2way.assign_all(0)
+
+for i in range(N):
+    val_s = train_labels[i]
+    label_is = sfix.Array(5)
+
+    s_minus_0 = val_s
+    s_minus_1 = val_s - 1
+    s_minus_2 = val_s - 2
+    s_minus_3 = val_s - 3
+    s_minus_4 = val_s - 4
+
+    label_is[0] = s_minus_1 * s_minus_2 * s_minus_3 * s_minus_4 / 24  
+    label_is[1] = s_minus_0 * s_minus_2 * s_minus_3 * s_minus_4 / 6   
+    label_is[2] = s_minus_0 * s_minus_1 * s_minus_3 * s_minus_4 / 2   
+    label_is[3] = s_minus_0 * s_minus_1 * s_minus_2 * s_minus_4 / 6   
+    label_is[4] = s_minus_0 * s_minus_1 * s_minus_2 * s_minus_3 / 24  
+
+    # Update 1-way label marginals
+    for l in range(5):
+        real_counts_l[l] = real_counts_l[l] + label_is[l]
+
+    for j in range(num_genes):
+        val_r = train_data[i][j]
+
+        r_minus_10 = 1 - val_r
+        r_minus_1 = val_r - 1
+        r_minus_20 = 2 - val_r
+        r_minus_2 = val_r - 2
+        r_minus_30 = 3 - val_r
+        r_minus_3 = val_r - 3
+
+        gene_is = sfix.Array(4)
+        gene_is[0] = r_minus_10 * r_minus_20 * r_minus_30 / 6      
+        gene_is[1] = val_r * r_minus_20 * r_minus_30 / 2          
+        gene_is[2] = val_r * r_minus_1 * r_minus_30 / 2        
+        gene_is[3] = val_r * r_minus_1 * r_minus_2 / 6      
+
+        # Update 1-way feature marginals
+        for f in range(4):
+            real_counts[j][f] = real_counts[j][f] + gene_is[f]
+
+        # Update 2-way marginals
+        base_idx = j * 20  
+        for f in range(4):
+            feat_idx = f * 5
+            feat_indicator = gene_is[f]
+
+            real_counts_2way[j][feat_idx + 0] = real_counts_2way[j][feat_idx + 0] + feat_indicator * label_is[0]
+            real_counts_2way[j][feat_idx + 1] = real_counts_2way[j][feat_idx + 1] + feat_indicator * label_is[1]
+            real_counts_2way[j][feat_idx + 2] = real_counts_2way[j][feat_idx + 2] + feat_indicator * label_is[2]
+            real_counts_2way[j][feat_idx + 3] = real_counts_2way[j][feat_idx + 3] + feat_indicator * label_is[3]
+            real_counts_2way[j][feat_idx + 4] = real_counts_2way[j][feat_idx + 4] + feat_indicator * label_is[4]
+
+stop_timer(300)
+
+############# STEP 3: ADD NOISE (SECRET) #############
+start_timer(400)
+print_ln('Adding DP noise as per Pentyala et al. PPAI 2024...')
+
+####### Noisy 1-way marginals
+w = 0.03229168418603133
+if target_delta > 0:
+    for i in range(num_genes):
+       for k in range(4):
+           real_counts[i][k] = real_counts[i][k] * w + sigma * NormalSampler()
+
+    for i in range(num_classes):
+        real_counts_l[i] = real_counts_l[i] * w + sigma * NormalSampler()
+
+num_cliques = num_genes
+
+####### Noisy 2-way marginals
+w_2way = 0.03230853348756192
+if target_delta == 0:
+    sigma = 1.0 / num_cliques / 2.0
+
+if target_delta > 0:
+    for i in range(num_genes):
+       for k in range(20):
+           real_counts_2way[i][k] = real_counts_2way[i][k] * w_2way + sigma * NormalSampler()
+
+stop_timer(400)
+
+############# STEP 4: REVEAL #############
+start_timer(500)
+
+print_ln('=== MARGINALS_OUTPUT_START ===')
+print_ln('1WAY_FEATURES:')
+@for_range_opt(num_genes)
+def _(i):
+    @for_range_opt(4)
+    def _(j):
+        print_ln('%s', real_counts[i][j].reveal())
+
+print_ln('1WAY_LABELS:')
+@for_range_opt(num_classes)
+def _(i):
+    print_ln('%s', real_counts_l[i].reveal())
+
+print_ln('2WAY:')
+@for_range_opt(num_genes)
+def _(i):
+    @for_range_opt(4 * num_classes)
+    def _(k):
+        print_ln('%s', real_counts_2way[i][k].reveal())
+print_ln('=== MARGINALS_OUTPUT_END ===')
+
+print_ln('=== BIN_MEANS_START ===')
+@for_range_opt(num_genes)
+def _(i):
+    @for_range_opt(4)
+    def _(j):
+        print_ln('%s', mean_matrix[i][j].reveal())
+print_ln('=== BIN_MEANS_END ===')
+
+stop_timer(500)
+print_ln('Complete!')
