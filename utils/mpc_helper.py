@@ -16,6 +16,21 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+stage_times = {
+        'binning_time': None,
+        'marginal_computation_time': None,
+        'noise_addition_time': None,
+        'reveal_time': None
+    }
+    
+# Map the timer IDs from your .mpc script to keys
+timer_map = {
+    '200': 'binning_time',
+    '300': 'marginal_computation_time',
+    '400': 'noise_addition_time',
+    '500': 'reveal_time'
+}
+
 MPC_METRICS = {
     'compile_time': 0.0, 
     'execute_time': 0.0,

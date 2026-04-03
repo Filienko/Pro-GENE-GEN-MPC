@@ -251,7 +251,8 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, epsilons
                         marginal_protocol='ppai_bin_wo_dp_msr_opt',
                         mpspdz_path=mpspdz_path,
                         mpc_protocol=current_protocol,
-                        port=port
+                        port=port,
+                        num_iters=1000
                     )
                     
                     # ------------------------------------------------------------
