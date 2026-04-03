@@ -17,8 +17,10 @@ import pandas as pd
 import numpy as np
 
 MPC_METRICS = {
-    'compile_time': 0.0, 
+    'compile_time': 0.0,
     'execute_time': 0.0,
+    'input_prep_time': 0.0,
+    'parse_time': 0.0,
     'data_sent_mb': 0.0,
     'integer_bits': 0,
     'integer_opens': 0,
@@ -336,6 +338,7 @@ class MPCMarginalComputer:
         os.makedirs(player_data_dir, exist_ok=True)
 
         print(f"Preparing MPC input files in {player_data_dir}...")
+        _input_prep_start = time.time()
         for party_idx, party_file in enumerate(party_data_files):
             df = pd.read_csv(party_file)
             input_file = os.path.join(player_data_dir, f'Input-P{party_idx}-0')
@@ -408,6 +411,8 @@ class MPCMarginalComputer:
                   header=False, 
                   index=False)
 
+        MPC_METRICS['input_prep_time'] += (time.time() - _input_prep_start)
+
         # 2. CONSTRUCT ARGUMENTS DYNAMICALLY
         # Note: log_bin_marginals expects 5 args (N0, N1, Genes, Classes, Sigma)
         # We append sigma_bin_int (0) anyway; MP-SPDZ ignores extra args at the end.
@@ -423,13 +428,15 @@ class MPCMarginalComputer:
         result = self.executor.execute_protocol(protocol_name, num_parties=len(party_sizes), args=args)
 
         print("\nParsing noisy marginals and bin means from output...")
-        
+
         # 3. ADJUST OUTPUT PARSER (Extract k genes if filtered, else all genes)
         output_genes_count = deg_filtering if (deg_filtering is not None and deg_filtering > 0) else num_genes
-        
+
+        _parse_start = time.time()
         measurements_1way, measurements_2way, bin_means_array, selected_indices = self._parse_marginals_output(
             result.stdout, output_genes_count, num_classes
         )
+        MPC_METRICS['parse_time'] += (time.time() - _parse_start)
 
         print("\n" + "="*80)
         print("✓ Complete! Only noisy marginals revealed.")
