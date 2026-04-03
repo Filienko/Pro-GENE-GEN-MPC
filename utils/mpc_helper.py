@@ -17,10 +17,18 @@ import pandas as pd
 import numpy as np
 
 MPC_METRICS = {
-    'compile_time': 0.0,
-    'execute_time': 0.0,
-    'input_prep_time': 0.0,
-    'parse_time': 0.0,
+    # Stage-level times (parsed from MP-SPDZ timer output)
+    'binning_time': 0.0,       # Timer 200: secure binning
+    'marginal_time': 0.0,      # Timer 300: marginal computation
+    'noise_time': 0.0,         # Timer 400: noise generation and addition
+    'reveal_time': 0.0,        # Timer 500: reveal / output phase
+    # Pipeline-level times
+    'input_prep_time': 0.0,    # Python: writing party data to Player-Data
+    'compile_time': 0.0,       # MP-SPDZ: circuit compilation
+    'execute_time': 0.0,       # MP-SPDZ: full protocol execution (sum of above stages)
+    'parse_time': 0.0,         # Python: parsing MPC stdout
+    'generation_time': 0.0,    # Python: PGM model fitting + synthetic data generation
+    # Communication (global totals only — MP-SPDZ does not expose per-stage comm)
     'data_sent_mb': 0.0,
     'integer_bits': 0,
     'integer_opens': 0,
@@ -130,7 +138,20 @@ class MPCProtocolExecutor:
                 # Sum the MB sent by all parties
                 total_mb = sum(float(match) for match in data_sent_matches)
                 MPC_METRICS['data_sent_mb'] += total_mb
-            # -----------------------------
+
+            # Parse per-stage timer output: "Time for timer N = X.XX seconds"
+            _stage_timer_map = {
+                200: 'binning_time',
+                300: 'marginal_time',
+                400: 'noise_time',
+                500: 'reveal_time',
+            }
+            for timer_id_str, secs_str in re.findall(
+                r'Time for timer (\d+) = ([\d.]+) seconds', combined_output
+            ):
+                key = _stage_timer_map.get(int(timer_id_str))
+                if key:
+                    MPC_METRICS[key] += float(secs_str)
 
             return result
 

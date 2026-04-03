@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import os
 import sys
+import time
 
 # Add paths for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -180,7 +181,13 @@ def run_secure_mpc_pipeline(party_files, output_path, epsilon=10.0, delta=1e-5,
     print("="*80)
 
     # Determine number of samples to generate
+    _gen_start = time.time()
     synthetic_continuous = model.generate_continuous(num_rows=total_samples)
+    try:
+        import utils.mpc_helper as mpc_helper
+        mpc_helper.MPC_METRICS['generation_time'] += time.time() - _gen_start
+    except ImportError:
+        pass
     
     # NEW: Fetch the dynamically selected column names from the model 
     # (falls back to original column_names if no filtering happened)

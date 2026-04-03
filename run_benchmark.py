@@ -233,8 +233,11 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 synth_out_path = f"{prefix}tmp_synthetic_feat{n_features_to_use}_{current_protocol}_run{run_id}_opt.csv"
 
                 mpc_helper.MPC_METRICS = {
-                    'compile_time': 0.0, 'execute_time': 0.0,
-                    'input_prep_time': 0.0, 'parse_time': 0.0,
+                    'binning_time': 0.0, 'marginal_time': 0.0,
+                    'noise_time': 0.0, 'reveal_time': 0.0,
+                    'input_prep_time': 0.0, 'compile_time': 0.0,
+                    'execute_time': 0.0, 'parse_time': 0.0,
+                    'generation_time': 0.0,
                     'data_sent_mb': 0.0,
                     'integer_bits': 0, 'integer_opens': 0, 'integer_triples': 0, 'vm_rounds': 0
                 }
@@ -357,8 +360,12 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 'hist_intersection', 'dcr_knn', 'de_tpr', 'coex_tpr',
                 'wasserstein_dist', 'feat_rank_tau', 'feat_topk_overlap', 'mare_zero_rate', 'mare_nz_mean',
                 'corr_diff_mae', 'ari_real', 'ari_synth',
-                'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'data_sent_mb',
-                'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds'
+                # Stage-level times (from MP-SPDZ timer output)
+                'binning_time', 'marginal_time', 'noise_time', 'reveal_time',
+                # Pipeline-level times
+                'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'generation_time',
+                # Communication totals
+                'data_sent_mb', 'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds'
             ]
 
             for k in keys_to_avg:
@@ -370,10 +377,9 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 else:
                     avg_metrics[k] = int(sum(vals) / len(vals))
 
-            avg_metrics['input_prep_time'] = round(avg_metrics['input_prep_time'], 2)
-            avg_metrics['compile_time'] = round(avg_metrics['compile_time'], 2)
-            avg_metrics['execute_time'] = round(avg_metrics['execute_time'], 2)
-            avg_metrics['parse_time'] = round(avg_metrics['parse_time'], 2)
+            for t_key in ['binning_time', 'marginal_time', 'noise_time', 'reveal_time',
+                          'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'generation_time']:
+                avg_metrics[t_key] = round(avg_metrics[t_key], 2)
             avg_metrics['data_sent_mb'] = round(avg_metrics['data_sent_mb'], 2)
 
             results.append(avg_metrics)
@@ -390,8 +396,12 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
         'protocol', 'num_features', 'base_accuracy', 'accuracy', 'base_f1', 'f1_score',
         'hist_intersection', 'dcr_knn', 'de_tpr', 'coex_tpr',
         'wasserstein_dist', 'feat_rank_tau', 'feat_topk_overlap', 'mare_zero_rate', 'mare_nz_mean', 'corr_diff_mae', 'ari_real', 'ari_synth',
-        'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'data_sent_mb',
-        'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds'
+        # Stage-level times (inside MPC execution)
+        'binning_time', 'marginal_time', 'noise_time', 'reveal_time',
+        # Pipeline-level times
+        'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'generation_time',
+        # Communication totals (MP-SPDZ global only — per-stage not available)
+        'data_sent_mb', 'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds'
     ]
 
     results_df = pd.DataFrame(results)[cols]
