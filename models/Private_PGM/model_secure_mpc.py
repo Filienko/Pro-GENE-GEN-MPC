@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import sys
 import os
+import time
 import warnings
 import math
 
@@ -263,7 +264,10 @@ class SecureMPCPrivatePGM:
 
         domain = Domain(filtered_config.keys(), filtered_config.values())
         engine = FactoredInference(domain, log=True, iters=num_iters)
+        _pgm_start = time.time()
         self.model = engine.estimate(measurements, total=total_samples, engine="MD")
+        from utils import mpc_helper
+        mpc_helper.MPC_METRICS['generation_time'] += time.time() - _pgm_start
 
         print("✓ Model training completed")
 
