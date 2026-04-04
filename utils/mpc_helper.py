@@ -28,7 +28,16 @@ MPC_METRICS = {
     'execute_time': 0.0,       # MP-SPDZ: full protocol execution (sum of above stages)
     'parse_time': 0.0,         # Python: parsing MPC stdout
     'generation_time': 0.0,    # Python: PGM model fitting + synthetic data generation
-    # Communication (global totals only — MP-SPDZ does not expose per-stage comm)
+    # Per-stage communication (from TimerWithComm parentheses in MP-SPDZ stderr)
+    'binning_mb': 0.0,
+    'marginal_mb': 0.0,
+    'noise_mb': 0.0,
+    'reveal_mb': 0.0,
+    'binning_rounds': 0,
+    'marginal_rounds': 0,
+    'noise_rounds': 0,
+    'reveal_rounds': 0,
+    # Global communication totals
     'data_sent_mb': 0.0,
     'integer_bits': 0,
     'integer_opens': 0,
@@ -139,19 +148,23 @@ class MPCProtocolExecutor:
                 total_mb = sum(float(match) for match in data_sent_matches)
                 MPC_METRICS['data_sent_mb'] += total_mb
 
-            # Parse per-stage timer output: "Time for timer N = X.XX seconds"
-            _stage_timer_map = {
-                200: 'binning_time',
-                300: 'marginal_time',
-                400: 'noise_time',
-                500: 'reveal_time',
+            # Parse per-stage timer output from MP-SPDZ stderr:
+            # "Time200 = 1.234 seconds (5.67 MB, 42 rounds)"
+            _stage_map = {
+                200: ('binning_time',  'binning_mb',  'binning_rounds'),
+                300: ('marginal_time', 'marginal_mb', 'marginal_rounds'),
+                400: ('noise_time',    'noise_mb',    'noise_rounds'),
+                500: ('reveal_time',   'reveal_mb',   'reveal_rounds'),
             }
-            for timer_id_str, secs_str in re.findall(
-                r'Time for timer (\d+) = ([\d.]+) seconds', combined_output
+            for timer_id_str, secs_str, mb_str, rounds_str in re.findall(
+                r'Time(\d+) = ([\d.]+) seconds \(([\d.]+) MB, (\d+) rounds\)',
+                combined_output
             ):
-                key = _stage_timer_map.get(int(timer_id_str))
-                if key:
-                    MPC_METRICS[key] += float(secs_str)
+                keys = _stage_map.get(int(timer_id_str))
+                if keys:
+                    MPC_METRICS[keys[0]] += float(secs_str)
+                    MPC_METRICS[keys[1]] += float(mb_str)
+                    MPC_METRICS[keys[2]] += int(rounds_str)
 
             return result
 

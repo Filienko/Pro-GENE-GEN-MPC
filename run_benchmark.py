@@ -235,6 +235,10 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 mpc_helper.MPC_METRICS = {
                     'binning_time': 0.0, 'marginal_time': 0.0,
                     'noise_time': 0.0, 'reveal_time': 0.0,
+                    'binning_mb': 0.0, 'marginal_mb': 0.0,
+                    'noise_mb': 0.0, 'reveal_mb': 0.0,
+                    'binning_rounds': 0, 'marginal_rounds': 0,
+                    'noise_rounds': 0, 'reveal_rounds': 0,
                     'input_prep_time': 0.0, 'compile_time': 0.0,
                     'execute_time': 0.0, 'parse_time': 0.0,
                     'generation_time': 0.0,
@@ -362,9 +366,12 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 'corr_diff_mae', 'ari_real', 'ari_synth',
                 # Stage-level times (from MP-SPDZ timer output)
                 'binning_time', 'marginal_time', 'noise_time', 'reveal_time',
+                # Stage-level comm (from TimerWithComm parentheses in MP-SPDZ stderr)
+                'binning_mb', 'marginal_mb', 'noise_mb', 'reveal_mb',
+                'binning_rounds', 'marginal_rounds', 'noise_rounds', 'reveal_rounds',
                 # Pipeline-level times
                 'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'generation_time',
-                # Communication totals
+                # Global communication totals
                 'data_sent_mb', 'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds'
             ]
 
@@ -398,9 +405,12 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
         'wasserstein_dist', 'feat_rank_tau', 'feat_topk_overlap', 'mare_zero_rate', 'mare_nz_mean', 'corr_diff_mae', 'ari_real', 'ari_synth',
         # Stage-level times (inside MPC execution)
         'binning_time', 'marginal_time', 'noise_time', 'reveal_time',
+        # Stage-level comm (MB and rounds per stage from MP-SPDZ TimerWithComm)
+        'binning_mb', 'marginal_mb', 'noise_mb', 'reveal_mb',
+        'binning_rounds', 'marginal_rounds', 'noise_rounds', 'reveal_rounds',
         # Pipeline-level times
         'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'generation_time',
-        # Communication totals (MP-SPDZ global only — per-stage not available)
+        # Global communication totals
         'data_sent_mb', 'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds'
     ]
 
