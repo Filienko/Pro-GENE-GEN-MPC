@@ -206,7 +206,7 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
             n_features_to_use = min(n_features, X.shape[1])
             chosen_cols = X.sample(n=n_features_to_use, axis=1, random_state=42).columns
             X_sub = X[chosen_cols].copy()
-
+            # X_sub = X[chosen_cols].sample(1000, axis=0)
             df_sub = pd.concat([X_sub, y], axis=1)
             df_sub.rename(columns={label_column: 'label'}, inplace=True)
 
@@ -258,7 +258,8 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                         marginal_protocol='ppai_bin_wo_dp_msr_opt',
                         mpspdz_path=mpspdz_path,
                         mpc_protocol=current_protocol,
-                        port=port
+                        port=port,
+                        num_iters=1
                     )
 
                     # ------------------------------------------------------------
