@@ -226,7 +226,16 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 synth_out_path = f"{prefix}tmp_synthetic_feat{n_features_to_use}_{current_protocol}_run{run_id}_non_opt.csv"
 
                 mpc_helper.MPC_METRICS = {
-                    'compile_time': 0.0, 'execute_time': 0.0, 'data_sent_mb': 0.0,
+                    'binning_time': 0.0, 'marginal_time': 0.0,
+                    'noise_time': 0.0, 'reveal_time': 0.0,
+                    'binning_mb': 0.0, 'marginal_mb': 0.0,
+                    'noise_mb': 0.0, 'reveal_mb': 0.0,
+                    'binning_rounds': 0, 'marginal_rounds': 0,
+                    'noise_rounds': 0, 'reveal_rounds': 0,
+                    'input_prep_time': 0.0, 'compile_time': 0.0,
+                    'execute_time': 0.0, 'parse_time': 0.0,
+                    'generation_time': 0.0,
+                    'data_sent_mb': 0.0,
                     'integer_bits': 0, 'integer_opens': 0, 'integer_triples': 0, 'vm_rounds': 0
                 }
 
