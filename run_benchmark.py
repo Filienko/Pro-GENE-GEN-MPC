@@ -380,15 +380,22 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
                 vals = [rm[k] for rm in run_metrics_list if pd.notnull(rm[k])]
                 if not vals:
                     avg_metrics[k] = np.nan
+                    avg_metrics[k + '_std'] = np.nan
                 elif isinstance(vals[0], float):
                     avg_metrics[k] = round(sum(vals) / len(vals), 4)
+                    avg_metrics[k + '_std'] = round(float(np.std(vals, ddof=1)), 4) if len(vals) > 1 else np.nan
                 else:
                     avg_metrics[k] = int(sum(vals) / len(vals))
+                    avg_metrics[k + '_std'] = round(float(np.std(vals, ddof=1)), 4) if len(vals) > 1 else np.nan
 
             for t_key in ['binning_time', 'marginal_time', 'noise_time', 'reveal_time',
                           'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'generation_time']:
                 avg_metrics[t_key] = round(avg_metrics[t_key], 2)
+                if not (isinstance(avg_metrics[t_key + '_std'], float) and np.isnan(avg_metrics[t_key + '_std'])):
+                    avg_metrics[t_key + '_std'] = round(avg_metrics[t_key + '_std'], 2)
             avg_metrics['data_sent_mb'] = round(avg_metrics['data_sent_mb'], 2)
+            if not (isinstance(avg_metrics['data_sent_mb_std'], float) and np.isnan(avg_metrics['data_sent_mb_std'])):
+                avg_metrics['data_sent_mb_std'] = round(avg_metrics['data_sent_mb_std'], 2)
 
             results.append(avg_metrics)
 
@@ -400,20 +407,19 @@ def run_benchmark(full_data_path, label_column, mpspdz_path, protocols, feature_
         print("All runs failed. No dataframe to display.")
         return
 
-    cols = [
-        'protocol', 'num_features', 'base_accuracy', 'accuracy', 'base_f1', 'f1_score',
+    _metric_keys = [
+        'base_accuracy', 'accuracy', 'base_f1', 'f1_score',
         'hist_intersection', 'dcr_knn', 'de_tpr', 'coex_tpr',
         'wasserstein_dist', 'feat_rank_tau', 'feat_topk_overlap', 'mare_zero_rate', 'mare_nz_mean', 'corr_diff_mae', 'ari_real', 'ari_synth',
-        # Stage-level times (inside MPC execution)
         'binning_time', 'marginal_time', 'noise_time', 'reveal_time',
-        # Stage-level comm (MB and rounds per stage from MP-SPDZ TimerWithComm)
         'binning_mb', 'marginal_mb', 'noise_mb', 'reveal_mb',
         'binning_rounds', 'marginal_rounds', 'noise_rounds', 'reveal_rounds',
-        # Pipeline-level times
         'input_prep_time', 'compile_time', 'execute_time', 'parse_time', 'generation_time',
-        # Global communication totals
-        'data_sent_mb', 'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds'
+        'data_sent_mb', 'integer_bits', 'integer_opens', 'integer_triples', 'vm_rounds',
     ]
+    cols = ['protocol', 'num_features']
+    for _k in _metric_keys:
+        cols += [_k, _k + '_std']
 
     results_df = pd.DataFrame(results)[cols]
     print(results_df.to_string(index=False))
