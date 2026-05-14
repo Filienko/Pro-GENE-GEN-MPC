@@ -129,6 +129,37 @@ def compute_correlation_diff(real_df, synth_df):
     corr_synth = synth_df.corr().fillna(0).values
     return float(np.mean(np.abs(corr_real - corr_synth)))
 
+def compute_kl_divergences(X_synthetic, X_real, n_bins=50):
+    """
+    Compute KL divergences for each feature using binning
+    """
+    kl_divergences = []
+
+    for i in range(X_real.shape[1]):
+        # Create common bins based on real data range
+        feature_min = min(np.min(X_real[:, i]), np.min(X_synthetic[:, i]))
+        feature_max = max(np.max(X_real[:, i]), np.max(X_synthetic[:, i]))
+        bins = np.linspace(feature_min, feature_max, n_bins)
+
+        # Compute histograms
+        hist_real, _ = np.histogram(X_real[:, i], bins=bins, density=True)
+        hist_synthetic, _ = np.histogram(X_synthetic[:, i], bins=bins, density=True)
+
+        # Add small epsilon to avoid log(0)
+        epsilon = 1e-10
+        hist_real = hist_real + epsilon
+        hist_synthetic = hist_synthetic + epsilon
+
+        # Normalize to ensure they sum to 1
+        hist_real = hist_real / np.sum(hist_real)
+        hist_synthetic = hist_synthetic / np.sum(hist_synthetic)
+
+        # Compute KL divergence
+        kl_div = np.sum(hist_real * np.log(hist_real / hist_synthetic))
+        kl_divergences.append(kl_div)
+
+    return np.mean(kl_divergences), np.std(kl_divergences)
+
 def compute_lr_feature_importance_agreement(X_real, y_real, X_synth, y_synth, top_k=50):
     clf_real = LogisticRegression(max_iter=2000, random_state=42).fit(X_real, y_real)
     clf_synth = LogisticRegression(max_iter=2000, random_state=42).fit(X_synth, y_synth)
@@ -352,6 +383,8 @@ def run_benchmark(full_data_path, label_column, feature_sizes, epsilon=10.0,
                 mare_zero, mare_mean = compute_1d_marginals_and_zero_rates(X_train_real, X_train_synth)
                 wd_dist = compute_wasserstein(X_train_real, X_train_synth)
                 corr_diff = compute_correlation_diff(X_train_real, X_train_synth)
+                kl_mean, kl_std = compute_kl_divergences(
+                    X_train_synth.values, X_train_real.values)
                 lr_rank_tau, lr_topk_overlap = compute_lr_feature_importance_agreement(
                     X_train_real, y_train_real, X_train_synth, y_train_synth, top_k=50)
                 ari_real, ari_synth = compute_cluster_preservation(X_train_real, y_train_real, X_train_synth, y_train_synth)
@@ -375,6 +408,8 @@ def run_benchmark(full_data_path, label_column, feature_sizes, epsilon=10.0,
                 metrics['mare_zero_rate'] = mare_zero
                 metrics['mare_nz_mean'] = mare_mean
                 metrics['corr_diff_mae'] = corr_diff
+                metrics['kl_mean'] = kl_mean
+                metrics['kl_std'] = kl_std
                 metrics['feat_rank_tau'] = lr_rank_tau
                 metrics['feat_topk_overlap'] = lr_topk_overlap
                 metrics['ari_real'] = ari_real
@@ -409,7 +444,7 @@ def run_benchmark(full_data_path, label_column, feature_sizes, epsilon=10.0,
             'accuracy', 'f1_score',
             'hist_intersection', 'dcr_knn', 'de_tpr', 'coex_tpr',
             'wasserstein_dist', 'feat_rank_tau', 'feat_topk_overlap', 'mare_zero_rate', 'mare_nz_mean',
-            'corr_diff_mae', 'ari_real', 'ari_synth',
+            'corr_diff_mae', 'kl_mean', 'kl_std', 'ari_real', 'ari_synth',
         ]
 
         for k in keys_to_avg:
@@ -433,7 +468,7 @@ def run_benchmark(full_data_path, label_column, feature_sizes, epsilon=10.0,
         'num_features', 'epsilon', 'base_accuracy', 'accuracy', 'base_f1', 'f1_score',
         'hist_intersection', 'dcr_knn', 'de_tpr', 'coex_tpr',
         'wasserstein_dist', 'feat_rank_tau', 'feat_topk_overlap', 'mare_zero_rate', 'mare_nz_mean',
-        'corr_diff_mae', 'ari_real', 'ari_synth',
+        'corr_diff_mae', 'kl_mean', 'kl_std', 'ari_real', 'ari_synth',
     ]
 
     results_df = pd.DataFrame(results)[cols]
