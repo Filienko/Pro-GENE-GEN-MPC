@@ -180,6 +180,13 @@ def load_and_bin(data_path: str, label_col: str, n_bins: int):
     if label_col not in df.columns:
         raise ValueError(f"Label column '{label_col}' not found. "
                          f"Columns: {list(df.columns)[:10]} …")
+    # Drop non-numeric columns that are not the label (e.g. sample-ID columns
+    # like "Unnamed: 0" or "TCGA-..." that appear when the CSV was written with
+    # a pandas index or a separate sample-name column).
+    for col in df.select_dtypes(include=["object"]).columns:
+        if col != label_col:
+            df = df.drop(columns=[col])
+
     feature_cols = [c for c in df.columns if c != label_col]
     if df[label_col].dtype == object or not pd.api.types.is_integer_dtype(df[label_col]):
         df[label_col] = pd.Categorical(df[label_col]).codes
