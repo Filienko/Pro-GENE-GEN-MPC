@@ -71,14 +71,55 @@ class Private_PGM:
         ), "not differentially private"  # true eps <= requested eps
         return sigma
 
-    def train(self, train_df, config, cliques=None, num_iters=10000, mpc_protocol_file=None):
+    @staticmethod
+    def _select_top_k_gene_pairs(data_df, gene_columns, k):
+        """
+        Select top-K gene pairs ranked by absolute Pearson correlation.
+
+        Args:
+            data_df: DataFrame with gene columns
+            gene_columns: List of gene column names (target excluded)
+            k: Number of top pairs to return
+
+        Returns:
+            List of (gene_i, gene_j) tuples
+        """
+        n = len(gene_columns)
+        if k <= 0 or n < 2:
+            return []
+
+        correlations = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                gi, gj = gene_columns[i], gene_columns[j]
+                corr = np.abs(np.corrcoef(data_df[gi], data_df[gj])[0, 1])
+                if not np.isnan(corr):
+                    correlations.append((corr, (gi, gj)))
+
+        correlations.sort(key=lambda x: x[0], reverse=True)
+        return [pair for _, pair in correlations[:k]]
+
+    def train(self, train_df, config, cliques=None, gene_gene_cliques=None,
+              top_k_gene_pairs=None, num_iters=10000, mpc_protocol_file=None):
         """
         Train Private PGM model
 
         Args:
             train_df: Training dataframe
             config: Domain configuration (dict of column names to sizes)
-            cliques: List of clique tuples for 2-way marginals (default: all pairs with target)
+            cliques: List of (gene, target) clique tuples for 2-way marginals.
+                     Defaults to all (gene, target) pairs.
+            gene_gene_cliques: Explicit list of (gene_i, gene_j) tuples whose
+                               joint marginals will be measured to preserve
+                               gene-to-gene correlations. These are added to the
+                               same privacy-budget round as the gene-target
+                               cliques, so adding many pairs will dilute
+                               per-clique accuracy.
+            top_k_gene_pairs: If set, automatically selects this many gene-gene
+                              pairs ranked by absolute Pearson correlation and
+                              appends them to gene_gene_cliques. Cannot be used
+                              together with use_mpc=True (MPC protocol does not
+                              yet support gene-gene marginals).
             num_iters: Number of inference iterations
             mpc_protocol_file: Path to MPC protocol file (required if use_mpc=True)
         """
@@ -98,28 +139,65 @@ class Private_PGM:
         print("=" * 100)
         print("sigma:", sigma)
 
+        # Resolve gene-gene cliques
+        resolved_gene_gene = list(gene_gene_cliques) if gene_gene_cliques else []
+
+        if top_k_gene_pairs is not None:
+            if self.use_mpc:
+                raise NotImplementedError(
+                    "top_k_gene_pairs requires computing Pearson correlations on "
+                    "plaintext data, which is incompatible with use_mpc=True. "
+                    "Pre-compute gene-gene pairs and pass them via gene_gene_cliques."
+                )
+            gene_columns = [col for col in data.domain if col != self.target_variable]
+            auto_pairs = self._select_top_k_gene_pairs(train_df, gene_columns, top_k_gene_pairs)
+            # Deduplicate against explicitly provided pairs
+            existing = set(map(frozenset, resolved_gene_gene))
+            for pair in auto_pairs:
+                if frozenset(pair) not in existing:
+                    resolved_gene_gene.append(pair)
+                    existing.add(frozenset(pair))
+            print(f"Auto-selected {len(auto_pairs)} top gene-gene pairs "
+                  f"(top_k_gene_pairs={top_k_gene_pairs}).")
+
+        if resolved_gene_gene:
+            print(f"Measuring {len(resolved_gene_gene)} gene-gene 2-way marginals "
+                  f"to preserve correlations.")
+
         # Choose between MPC and standard computation
         if self.use_mpc:
+            if resolved_gene_gene:
+                raise NotImplementedError(
+                    "Gene-gene marginals are not yet supported in the MPC path. "
+                    "The underlying MPC protocol (ppai_msr_noisy_final) only computes "
+                    "gene-target marginals. Use use_mpc=False or omit gene_gene_cliques."
+                )
             measurements = self._train_with_mpc(
                 data, domain, sigma, cliques, mpc_protocol_file
             )
         else:
             measurements = self._train_standard(
-                data, domain, sigma, cliques
+                data, domain, sigma, cliques, resolved_gene_gene
             )
 
         engine = FactoredInference(domain, log=True, iters=num_iters)
         self.model = engine.estimate(measurements, total=total, engine="MD")
 
-    def _train_standard(self, data, domain, sigma, cliques):
+    def _train_standard(self, data, domain, sigma, cliques, gene_gene_cliques=None):
         """
-        Standard training without MPC - compute marginals directly on plaintext data
+        Standard training without MPC - compute marginals directly on plaintext data.
+
+        Gene-to-gene correlations are captured by including gene-gene 2-way
+        marginals in the same privacy-budget round as gene-target marginals.
+        All 2-way clique weights are L2-normalised together, so the per-clique
+        noise scales with the square root of the total number of cliques.
 
         Args:
             data: Dataset object
             domain: Domain object
             sigma: Noise parameter
-            cliques: List of clique tuples
+            cliques: List of (gene, target) clique tuples
+            gene_gene_cliques: List of (gene_i, gene_j) clique tuples
 
         Returns:
             list: Measurements for inference
@@ -140,21 +218,26 @@ class Private_PGM:
                 y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
                 measurements.append((I, y, sigma, (col,)))
 
-        # spend half of privacy budget to measure 2 way marginals with the target variable
+        # Build complete list of 2-way cliques: gene-target + gene-gene
         if cliques is None:
             cliques = []
             for col in data.domain:
                 if col != self.target_variable:
                     cliques.append((col, self.target_variable))
 
-        weights = np.ones(len(cliques))
+        all_2way_cliques = list(cliques)
+        if gene_gene_cliques:
+            all_2way_cliques.extend(gene_gene_cliques)
+
+        weights = np.ones(len(all_2way_cliques))
         weights /= np.linalg.norm(weights)  # now has L2 norm = 1
 
         if self.target_delta == 0:
-            sigma = 1.0 / len(cliques) / 2.0
+            # Laplace budget scales with total number of 2-way cliques
+            sigma = 1.0 / len(all_2way_cliques) / 2.0
 
-        # 2-way marginals
-        for cl, wgt in zip(cliques, weights):
+        # 2-way marginals (gene-target and gene-gene together in one budget round)
+        for cl, wgt in zip(all_2way_cliques, weights):
             x = data.project(cl).datavector()
             I = sparse.eye(x.size)
             if self.target_delta > 0:
