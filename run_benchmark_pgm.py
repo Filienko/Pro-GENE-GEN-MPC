@@ -242,7 +242,8 @@ def bins_to_continuous(synth_array, feature_cols, label_col, bin_means):
 # ==========================================
 
 def run_benchmark(full_data_path, label_column, feature_sizes, epsilon=10.0,
-                  delta=1e-5, n_runs=1, num_iters=10000, n_bins=4, prefix=""):
+                  delta=1e-5, n_runs=1, num_iters=10000, n_bins=4, prefix="",
+                  gene_gene_cliques=None):
     print(f"Loading full dataset from {full_data_path}...")
     df = pd.read_csv(full_data_path)
 
@@ -306,7 +307,19 @@ def run_benchmark(full_data_path, label_column, feature_sizes, epsilon=10.0,
                     target_delta=delta,
                     use_mpc=False
                 )
-                pgm.train(binned_train_df, config, num_iters=num_iters)
+                # Filter gene_gene_cliques to pairs present in this feature subset
+                active_cliques = None
+                if gene_gene_cliques:
+                    active_cliques = [
+                        (a, b) for a, b in gene_gene_cliques
+                        if a in feature_cols and b in feature_cols
+                    ]
+                    print(f"  Using {len(active_cliques)} gene-gene cliques "
+                          f"({len(gene_gene_cliques)} provided, "
+                          f"{len(gene_gene_cliques) - len(active_cliques)} outside feature subset)")
+
+                pgm.train(binned_train_df, config, num_iters=num_iters,
+                          gene_gene_cliques=active_cliques or [])
 
                 # ---- Generate synthetic data ----
                 synth_array = pgm.generate(num_rows=len(train_df))
@@ -444,7 +457,20 @@ if __name__ == "__main__":
     parser.add_argument('--num_iters', type=int, default=10000, help='PGM inference iterations')
     parser.add_argument('--bins', type=int, default=4, help='Number of bins per feature (default: 4)')
     parser.add_argument('--prefix', type=str, default='', help='Prefix for all output filenames (enables concurrent runs)')
+    parser.add_argument('--gene-gene-cliques', type=str, default=None,
+                        help='Path to JSON file produced by select_gene_pairs.py '
+                             '(contains a "pairs" list of [gene_i, gene_j] entries). '
+                             'These gene-gene 2-way marginals are measured alongside '
+                             'the standard gene-target marginals to preserve '
+                             'gene-to-gene correlations in the synthetic data.')
     args = parser.parse_args()
+
+    gene_gene_cliques = None
+    if args.gene_gene_cliques:
+        import json
+        with open(args.gene_gene_cliques) as f:
+            gene_gene_cliques = [tuple(p) for p in json.load(f)["pairs"]]
+        print(f"Loaded {len(gene_gene_cliques)} gene-gene cliques from {args.gene_gene_cliques}")
 
     run_benchmark(
         full_data_path=args.data,
@@ -456,5 +482,6 @@ if __name__ == "__main__":
         n_runs=args.runs,
         num_iters=args.num_iters,
         n_bins=args.bins,
-        prefix=args.prefix
+        prefix=args.prefix,
+        gene_gene_cliques=gene_gene_cliques
     )
