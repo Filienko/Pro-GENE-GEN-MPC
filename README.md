@@ -1,4 +1,25 @@
-# Benchmark Commands
+# Pro-GENE-GEN-MPC: Federated Generation of Synthetic RNA-seq Data
+
+This repository contains the code for the paper
+
+D. Filienko, M. De Cock, S. Pentyala. **Federated Generation of Synthetic RNA-seq Data.**
+*Journal of Computational Biology*, 2027 (to appear). Preprint: [arXiv:2604.27456](https://arxiv.org/abs/2604.27456)
+
+It implements federated generation of synthetic bulk RNA-seq data from data held by multiple parties, using probabilistic graphical models trained with secure multi-party computation protocols (MP-SPDZ), so that no party reveals its data to the others.
+
+If you use this code, please cite:
+
+```bibtex
+@article{filienko2027federated,
+  title   = {Federated Generation of Synthetic {RNA}-seq Data},
+  author  = {Filienko, Daniil and De Cock, Martine and Pentyala, Sikha},
+  journal = {Journal of Computational Biology},
+  year    = {2027},
+  note    = {To appear. Preprint: arXiv:2604.27456}
+}
+```
+
+## Benchmark Commands
 
 Two benchmark modes are supported: **in-the-clear** (plaintext PGM-based) and **MPC** (secure multi-party computation via MP-SPDZ). Each mode supports four datasets.
 
@@ -201,4 +222,14 @@ python run_benchmark.py \
 | `--runs` | Number of repeated runs for averaging |
 | `--mpspdz` | Path to the MP-SPDZ directory (MPC mode only) |
 | `--port` | Base port for MP-SPDZ communication (MPC mode only) |
+
+---
+
+## License
+
+MIT; see [`LICENSE`](LICENSE). This repository extends [PRO-GENE-GEN](https://github.com/MarieOestreich/PRO-GENE-GEN) (Chen et al., PoPETs 2024) to the MPC setting and inherits third-party components under their own licenses (Apache-2.0, MPL-2.0, BSD-3-Clause), notably `models/Private_PGM/` and the bundled MP-SPDZ copies. These are listed in [`LICENSES/THIRD-PARTY-NOTICES.md`](LICENSES/THIRD-PARTY-NOTICES.md); please read it before reusing them. The datasets and the paper are not covered by the MIT license.
+
+## Acknowledgments
+
+This material is based upon work supported by the National Science Foundation under Grant No. 2451163 and Grant No. 2523406, by NSF NAIRR allocations NAIRR240485 and NAIRR240091, and by the National Institutes of Health under Agreement No. 1OT2OD032581. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the authors and do not necessarily reflect the views of the National Science Foundation or the National Institutes of Health.
 
