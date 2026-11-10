@@ -1,5 +1,7 @@
 # FactorGen: low-rank factor generators for private, high-fidelity synthetic RNA-seq
 
+> Run commands for every generator, including the StructPGM variants, are in [`../GENERATORS.md`](../GENERATORS.md).
+
 FactorGen targets the gap in the CAMDA 2025 benchmark (Öztürk et al., bioRxiv 2026.03.02.707794):
 - **Fidelity without privacy:** MVN, CVAE/CVAE-GMM and Embedded Diffusion have high fidelity, but membership inference breaks them.
 - **Privacy without fidelity:** P-PGM and NMF are private, but they lose co-expression.
@@ -122,7 +124,8 @@ python run_factorgen.py --method gauss --k 200 --external_counts $COMB_TSV --cou
 | option | default | meaning |
 |---|---|---|
 | `--k` | 50 | number of shared factors: larger k gives more co-expression and more leakage |
-| `--shrink` | 0.3 | shrinks class factor covariance and residual variance toward the pooled **within-class** estimate (helps small subtypes) |
+| `--shrink` | 0.3 | shrinks class factor covariance and residual variance toward the pooled **within-class** estimate |
+| `--no_adaptive_shrink` | off | by default a class with n_c rows uses λ_c = max(shrink, k/n_c), so small subtypes (BRCA Normal-like, about 32 training rows) lean on the pooled estimate |
 | `--resid_scale` | 1.0 | multiplier on the independent residual variance (>1 is more private, lower fidelity) |
 | `--n_components` | 1 | `gauss`: mixture components per class (components are shrunk toward the class covariance) |
 | `--sigma_stop` | 0.1 | `diffusion`: stop the reverse chain at this noise level instead of denoising onto training points |

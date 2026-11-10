@@ -52,6 +52,8 @@ def parse_args():
     m.add_argument("--k", type=int, default=50, help="number of shared factors")
     m.add_argument("--shrink", type=float, default=0.3,
                    help="shrinkage of class factor cov / residual var toward pooled within-class")
+    m.add_argument("--no_adaptive_shrink", action="store_true",
+                   help="disable lambda_c = max(shrink, k/n_c) for small classes")
     m.add_argument("--external_counts", default=None,
                    help="optional TSV (genes x samples) of a NON-member cohort used to learn the basis "
                         "(e.g. other TCGA tumours). Samples that also occur in --counts are dropped.")
@@ -144,7 +146,9 @@ def main():
         if a.method == "mvn_camda":
             Xs, ys = mvn_camda(X, y, n_total, rng)
         else:
-            fm = fit_factor_model(X, y, k=a.k, shrink=a.shrink, external=external)
+            fm = fit_factor_model(X, y, k=a.k, shrink=a.shrink, external=external,
+                                  adaptive_shrink=not a.no_adaptive_shrink)
+            info["shrink_per_class"] = {c: round(v, 3) for c, v in fm.shrink_used.items()}
             if a.method == "gauss":
                 from factor_gauss import FactorGauss
                 gen = FactorGauss(n_components=a.n_components, resid_scale=a.resid_scale,

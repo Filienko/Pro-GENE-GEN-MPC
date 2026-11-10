@@ -148,17 +148,20 @@ class FactorModel:
     priors: Dict[str, float] = field(default_factory=dict)
     pooled_score_cov: Optional[np.ndarray] = None
     pooled_resid_var: Optional[np.ndarray] = None
+    shrink_used: Dict[str, float] = field(default_factory=dict)
 
 
 def fit_factor_model(X: np.ndarray, y: np.ndarray, k: int = 50, shrink: float = 0.3,
                      external: Optional[np.ndarray] = None,
-                     resid_floor: float = 1e-4) -> FactorModel:
+                     resid_floor: float = 1e-4, adaptive_shrink: bool = True) -> FactorModel:
     """Fit basis, per-class means, factor covariances and residual variances.
 
     shrink = lambda in [0, 1]: class factor covariance and residual variance are
     (1 - lambda) * class estimate + lambda * pooled *within-class* estimate.
     (Shrinking toward the global covariance would inject between-class
     variation and create spurious co-expression edges.)
+    adaptive_shrink: use lambda_c = max(shrink, min(1, k / n_c)) so that small
+    classes (e.g. BRCA Normal-like, ~32 training rows) lean on the pooled estimate.
     """
     W = fit_basis(X, y, k, external=external)
     classes = [str(c) for c in np.unique(y)]
@@ -179,8 +182,15 @@ def fit_factor_model(X: np.ndarray, y: np.ndarray, k: int = 50, shrink: float = 
             rv_c = (Xc - mu - S @ W).var(0)
         else:  # tiny class: rely on pooled statistics only
             cov_c, rv_c = pooled_cov, pooled_rv
-        cov = (1 - shrink) * cov_c + shrink * pooled_cov
-        rv = np.maximum((1 - shrink) * rv_c + shrink * pooled_rv, resid_floor)
+        # adaptive shrinkage: a class with n_c rows cannot support a k x k covariance
+        # when n_c is close to k (rank-deficient -> membership leak and noisy
+        # co-expression), so it borrows at least a fraction k / n_c from the pooled estimate
+        lam = shrink
+        if adaptive_shrink:
+            lam = max(shrink, min(1.0, W.shape[0] / max(len(Xc), 1)))
+        cov = (1 - lam) * cov_c + lam * pooled_cov
+        rv = np.maximum((1 - lam) * rv_c + lam * pooled_rv, resid_floor)
+        model.shrink_used[c] = lam
         model.stats[c] = ClassStats(mu=mu, resid_var=rv, scores=S,
                                     score_cov=np.atleast_2d(cov), n=len(Xc))
         model.priors[c] = len(Xc) / n_tot
