@@ -191,6 +191,7 @@ About 1.5 s per fold on BRCA, CPU only.
 - MeLoMIA with synth-shadows (15 base shadows, no Optuna) against LowRankDP eps=30 on BRCA: AUC 0.495, TPR@10 % 0.100. The same pipeline gave 0.641 on the non-DP CopulaGen.
 - Positive control: the same MeLoMIA pipeline against the CAMDA MVN baseline (`--gen mvn`, per-class full covariance, noise level 0.7) on BRCA gives AUC 0.939; MahalaMIA gives 0.944 and MAMA-MIA (10 bins) 0.517. So the pipeline has power, and the attacks that break MVN find nothing in LowRankDP.
 - Model-aware shadow attack (`aware` stage; shadows are LowRankDP at the same eps, features are likelihood terms of a CopulaGen refitted on the synthetic data) against LowRankDP eps=30: AUC 0.517 ± 0.018 on BRCA (15 shadows) and 0.505 ± 0.011 on COMBINED (10 shadows). The meta-classifier reaches only 0.53 / 0.50 on the attacker's own held-out shadows. Small BRCA classes (Her2, Normal) reach 0.54 with fold SD 0.10–0.14.
+- The same model-aware attack against LowRankDP eps=10 (shadows trained at eps=10): AUC 0.503 ± 0.025 on BRCA and 0.497 ± 0.007 on COMBINED; 0.50 on the attacker's own held-out shadows for both.
 - Not run: MAMA-MIA on P-PGM eps=30, and a likelihood-ratio attack on the released class statistics.
 - The shrinkage and budget split were tuned on BRCA folds 1–2.
 - A Private-Evolution-style vote step (`--vote`) changed nothing measurable and is off by default.
