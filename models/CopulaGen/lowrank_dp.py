@@ -35,19 +35,37 @@ GRID = np.geomspace(1e-2, 1e5, 141)          # data-independent grid for the cli
 
 
 def rho_from_eps_gdp(eps, delta):
-    """Exact accounting.  Every release is a Gaussian mechanism with sensitivity / sigma fixed in advance,
-    so their adaptive composition is mu-GDP with mu^2 = sum (sens / sigma)^2 = 2 rho (Dong, Roth, Su 2022),
-    and mu-GDP is (eps, delta)-DP iff delta >= Phi(-eps/mu + mu/2) - e^eps Phi(-eps/mu - mu/2)
-    (Balle & Wang 2018).  Returns the largest rho = mu^2 / 2 that meets (eps, delta)."""
-    from scipy.stats import norm
+    """Budget for accounting="gdp", computed with the autodp library (Wang et al.), not by hand.
+    Every release is a Gaussian mechanism whose sensitivity / sigma ratio is fixed in advance, so the
+    composition is itself a Gaussian mechanism with (sens / sigma)^2 = sum_j (sens_j / sigma_j)^2 = 2 rho.
+    autodp's ExactGaussianMechanism gives its exact eps at the given delta (analytic Gaussian mechanism,
+    Balle & Wang 2018); the largest rho whose eps does not exceed the target is found by bisection.
+    eps_spent() below re-derives the spent eps from the noise actually used, with autodp's own composition."""
+    import warnings
+    from autodp.mechanism_zoo import ExactGaussianMechanism
     if not np.isfinite(eps):
         return np.inf
-    dl = lambda mu: norm.cdf(-eps / mu + mu / 2) - np.exp(eps + norm.logcdf(-eps / mu - mu / 2))
-    lo, hi = 1e-6, 100.0
-    for _ in range(200):
-        mid = (lo + hi) / 2
-        lo, hi = (mid, hi) if dl(mid) <= delta else (lo, mid)
+    lo, hi = 1e-4, 60.0                          # mu = sens / sigma of the composed mechanism
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for _ in range(60):
+            mid = (lo + hi) / 2
+            ok = ExactGaussianMechanism(sigma=1 / mid).get_approxDP(delta) <= eps
+            lo, hi = (mid, hi) if ok else (lo, mid)
     return lo ** 2 / 2
+
+
+def eps_spent(ledger, delta):
+    """eps at the given delta for a list of (sensitivity, sigma) Gaussian releases, composed by autodp."""
+    import warnings
+    from autodp.mechanism_zoo import ExactGaussianMechanism
+    from autodp.transformer_zoo import ComposeGaussian
+    mechs = [ExactGaussianMechanism(sigma=sg / se) for se, sg in ledger if sg > 0]
+    if len(mechs) < len(ledger) or not mechs:
+        return float("inf")                      # a release without noise (ablation) has no guarantee
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return float(ComposeGaussian()(mechs, [1] * len(mechs)).get_approxDP(delta))
 
 
 class LowRankDP:
@@ -71,9 +89,11 @@ class LowRankDP:
     # ------------------------------------------------------------------ helpers
     def _sigma(self, name, sens):
         if name in self.noise_off or not np.isfinite(self.rho):
+            self.ledger.append((float(sens), 0.0))
             return 0.0
         s = sens / np.sqrt(2 * self.rho * self.shares[name])
         self.info[f"sigma_{name}"] = float(s)
+        self.ledger.append((float(sens), float(s)))
         return s
 
     def _clip_threshold(self, norms, parts):
@@ -89,8 +109,11 @@ class LowRankDP:
 
     def _sigma_clip(self, parts):
         if "clip" in self.noise_off or not np.isfinite(self.rho):
+            self.ledger.append((1.0, 0.0))
             return 0.0
-        return 1.0 / np.sqrt(2 * self.rho * self.shares["clip"] / parts)
+        s = 1.0 / np.sqrt(2 * self.rho * self.shares["clip"] / parts)
+        self.ledger.append((1.0, float(s)))
+        return s
 
     @staticmethod
     def _clip_rows(A, C):
@@ -103,6 +126,7 @@ class LowRankDP:
         n, d = X.shape
         self.rho = (rho_from_eps_gdp if self.accounting == "gdp" else rho_from_eps)(self.eps, self.delta)
         rng = self.rng
+        self.ledger = []                         # (sensitivity, sigma) of every noisy release
         public = self.external is not None
         # 1. class counts
         sn = self._sigma("n", 1.0)
@@ -227,6 +251,10 @@ class LowRankDP:
         self.cells = None
         if self.vote_cells:
             self._vote(S, y)
+        try:      # independent check of the guarantee from the noise actually used (autodp)
+            self.info["eps_spent_autodp"] = eps_spent(self.ledger, self.delta)
+        except ImportError:
+            self.info["eps_spent_autodp"] = None
         return self
 
     def _vote(self, S_priv, y):

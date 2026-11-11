@@ -219,7 +219,7 @@ Private-only DP-PCA keeps few components (BRCA: 1 at eps=10, 2 at eps=30; COMBIN
 
 These settings are the default of `run_lrdp.py` (`--v1` restores the original ones, which the older tables and scripts in this README use). v2 changes three parameters and no algorithm step. Selected on folds 1-3 (`lrdp_screen.sh`, two rounds), confirmed on 5 folds (`lrdp_v2.sh`):
 
-1. Exact Gaussian-DP accounting (`--accounting gdp`). Every release is a Gaussian mechanism, so the composition is mu-GDP with mu^2 = 2 rho, converted to (eps, delta) exactly. Same stated (eps, delta), 17 % more rho at eps=30 and 29 % more at eps=10 (noise x0.93 and x0.88).
+1. Exact Gaussian-DP accounting (`--accounting gdp`), computed with the `autodp` library (0.2.3.1), not by hand: `ExactGaussianMechanism.get_approxDP` gives the eps of the composed Gaussian mechanism and the budget is found by bisection on it. After every fit, the spent eps is re-derived from the (sensitivity, sigma) of each release with autodp's `ComposeGaussian` and stored as `eps_spent_autodp` in `config.json`: 10.000 and 30.000 for v2, and 8.555 and 27.006 for v1, whose zCDP bound is conservative. Same stated (eps, delta), 17 % more rho at eps=30 and 29 % more at eps=10 (noise x0.93 and x0.88). The earlier hand-written closed form agrees to 6 digits and outputs are unchanged (max difference 1e-14).
 2. Budget shares mean 0.45 / basis 0.20 / ccov 0.10 (private-only; was 0.40 / 0.15 / 0.20).
 3. Clip threshold at the 0.75 quantile of the row norms instead of 0.9 (`--clip_q 0.75`).
 
