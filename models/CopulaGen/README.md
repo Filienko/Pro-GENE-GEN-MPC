@@ -215,6 +215,36 @@ Private-only DP-PCA keeps few components (BRCA: 1 at eps=10, 2 at eps=30; COMBIN
 - `--basis_share 0.35` gives a little more co-expression on BRCA at eps=30 (r 0.575) but worse W1 at eps=10 (0.170).
 - Reproduce with `lrdp_between.sh` (resumable). Full tables: `results_copula/LRDP/between_summary.txt`.
 
+### `--v2`: recommended preset (Nov 12 2026)
+
+`run_lrdp.py --v2` = three changes, selected on folds 1-3 (`lrdp_screen.sh`, two rounds) and confirmed on 5 folds (`lrdp_v2.sh`):
+
+1. Exact Gaussian-DP accounting (`--accounting gdp`). Every release is a Gaussian mechanism, so the composition is mu-GDP with mu^2 = 2 rho, converted to (eps, delta) exactly. Same stated (eps, delta), 17 % more rho at eps=30 and 29 % more at eps=10 (noise x0.93 and x0.88).
+2. Clip threshold at the 0.75 quantile of the row norms instead of 0.9 (`--clip_q 0.75`).
+3. Private-only: `--between` and shares mean 0.45 / basis 0.20 / ccov 0.10. With a public cohort only 1 and 2 apply.
+
+| Data | eps | Variant | W1 | within-class corr r | coex TPR / FER | DE TPR / FPR | TSTR acc | KL real‖syn / syn‖real (test) | MAMA-MIA | MahalaMIA | model-aware |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| BRCA | 30 | v1 private | 0.102 | 0.489 | 0.25 / 0.11 | 0.75 / 0.05 | 0.831 | 0.384 / 0.682 | 0.566 | 0.510 | 0.517 |
+| BRCA | 30 | **v2 private** | 0.098 | 0.596 | 0.38 / 0.17 | 0.77 / 0.04 | 0.832 | 0.400 / 0.634 | 0.569 | 0.511 | 0.514 |
+| BRCA | 30 | v2 public | 0.099 | 0.619 | 0.41 / 0.16 | 0.75 / 0.04 | 0.817 | 0.409 / 0.631 | 0.561 | 0.507 | – |
+| BRCA | 10 | v1 private | 0.153 | 0.118 | 0.08 / 0.08 | 0.58 / 0.07 | 0.790 | 0.536 / 0.848 | 0.532 | 0.505 | 0.503 |
+| BRCA | 10 | **v2 private** | 0.130 | 0.397 | 0.21 / 0.18 | 0.63 / 0.06 | 0.778 | 0.495 / 0.714 | 0.552 | 0.510 | 0.506 |
+| BRCA | 10 | v2 public | 0.129 | 0.596 | 0.32 / 0.16 | 0.58 / 0.06 | 0.808 | 0.437 / 0.726 | 0.541 | 0.505 | – |
+| COMBINED | 30 | v1 private | 0.068 | 0.675 | 0.68 / 0.13 | 0.91 / 0.04 | 0.986 | 0.105 / 0.135 | 0.541 | 0.502 | 0.505 |
+| COMBINED | 30 | **v2 private** | 0.070 | 0.702 | 0.74 / 0.18 | 0.91 / 0.03 | 0.983 | 0.113 / 0.124 | 0.541 | 0.504 | 0.511 |
+| COMBINED | 30 | v2 public | 0.070 | 0.737 | 0.73 / 0.14 | 0.90 / 0.03 | 0.988 | 0.113 / 0.127 | 0.541 | 0.499 | – |
+| COMBINED | 10 | v1 private | 0.085 | 0.520 | 0.46 / 0.11 | 0.81 / 0.06 | 0.968 | 0.121 / 0.152 | 0.526 | 0.500 | 0.497 |
+| COMBINED | 10 | **v2 private** | 0.081 | 0.619 | 0.57 / 0.15 | 0.83 / 0.04 | 0.977 | 0.129 / 0.133 | 0.527 | 0.500 | 0.502 |
+| COMBINED | 10 | v2 public | 0.079 | 0.704 | 0.72 / 0.18 | 0.84 / 0.05 | 0.975 | 0.126 / 0.134 | 0.530 | 0.498 | – |
+
+- 5 folds; MAMA-MIA and MahalaMIA on COMBINED use folds 1-3. Model-aware = shadow attack with LowRankDP shadows of the same preset and eps.
+- Gains: co-expression everywhere, W1 at eps=10, DE false positives, KL syn‖real.
+- Costs: KL real‖syn rises slightly (tighter clipping narrows the tails), COMBINED W1 at eps=30 0.068 -> 0.070, BRCA TSTR at eps=10 0.790 -> 0.778, BRCA top-feature overlap at eps=30 7.2 -> 5.6 of 50, MAMA-MIA on BRCA eps=10 0.532 -> 0.552 (within fold SD 0.02-0.03).
+- Rejected in the screen: winsorising at |z| <= 3 (worse W1 on COMBINED), clip quantile 0.97 and 0.60, and reshaping marginals toward the released pooled histogram (`--marg`, worse W1 on both datasets).
+- BRCA TSTR under `--between`: v1 under-represents the within-class variance along the class-separating axes (5-25 % of the real value; 44-83 % with `--between`), so its synthetic subtypes are easier to separate than real ones. Real-to-real accuracy is 0.859.
+- The settings were selected on folds 1-3 of the evaluation data; this is not charged to eps.
+
 ### DP audit (Nov 11 2026)
 
 - Every statement in `LowRankDP.fit` that reads the private arrays was listed. Each one is either a Gaussian-mechanism release (class counts, anchor histogram, four clipping-quantile histograms, class sums, absolute-deviation sums, Gram matrix, per-class factor covariance) or a deterministic transform of the data with earlier releases that feeds the next release. Nothing else derived from the private data is stored or returned.

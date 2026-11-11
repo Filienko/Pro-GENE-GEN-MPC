@@ -43,6 +43,7 @@ p.add_argument("--gen", default="copula", choices=["copula", "nd", "lrdp", "mvn"
 p.add_argument("--mvn_noise", type=float, default=0.7)
 p.add_argument("--gen_eps", type=float, default=30.0)
 p.add_argument("--gen_ext", default=None, help="public cohort TSV for --gen lrdp")
+p.add_argument("--gen_kw", default="{}", help="JSON kwargs for LowRankDP shadows (--gen lrdp)")
 p.add_argument("--mama_bins", type=int, nargs="+", default=[4, 10])
 p.add_argument("--K", type=int, default=15)
 p.add_argument("--folds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
@@ -115,7 +116,7 @@ def gen_lrdp(Xtr, ytr, seed):
         e = load_expression(a.gen_ext).reindex(columns=genes)
         pats = {s[:12] for s in expr.index}
         _EXT.append(e[[s[:12] not in pats for s in e.index]].values)
-    g = LowRankDP(epsilon=a.gen_eps, external=_EXT[0] if _EXT else None, seed=seed).fit(Xtr, ytr)
+    g = LowRankDP(epsilon=a.gen_eps, external=_EXT[0] if _EXT else None, seed=seed, **json.loads(a.gen_kw)).fit(Xtr, ytr)
     return g.sample(len(Xtr))
 
 
