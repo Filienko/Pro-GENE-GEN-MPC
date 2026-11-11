@@ -1,9 +1,10 @@
 """LowRankDP: DP generator that measures class structure only in a k-dimensional factor space.
 
-DP-CopulaGen and Private-PGM measure a histogram per (class, gene): one record touches all d = 978
-genes of one class, so every class marginal carries noise of L2 sensitivity sqrt(d) and small classes
-are lost.  Here the d-dimensional measurements are pooled over all records, and everything
-class-specific is measured in k << d dimensions (zCDP, Gaussian mechanism, add/remove neighbours):
+DP-CopulaGen and Private-PGM measure a histogram per (class, gene) and reconstruct the class
+marginals from the noisy bin counts.  Here the class mean and spread are measured directly as
+L2-clipped sums, which is a more noise-efficient statistic, and the covariance is measured only in
+k << d dimensions (zCDP, Gaussian mechanism, add/remove neighbours).  As in those methods, a record
+is in one class, so class-wise measurements compose in parallel:
 
   n      class counts                                              sensitivity 1
   anchor per-gene centre / scale (a, b) used only to standardise:  public cohort, or a coarse pooled

@@ -39,7 +39,8 @@ p.add_argument("--annot", required=True)
 p.add_argument("--label_col", default="Subtype")
 p.add_argument("--target_dir", required=True)
 p.add_argument("--work", required=True, help="cache dir for shadows / features")
-p.add_argument("--gen", default="copula", choices=["copula", "nd", "lrdp"])
+p.add_argument("--gen", default="copula", choices=["copula", "nd", "lrdp", "mvn"])
+p.add_argument("--mvn_noise", type=float, default=0.7)
 p.add_argument("--gen_eps", type=float, default=30.0)
 p.add_argument("--gen_ext", default=None, help="public cohort TSV for --gen lrdp")
 p.add_argument("--mama_bins", type=int, nargs="+", default=[4, 10])
@@ -118,6 +119,20 @@ def gen_lrdp(Xtr, ytr, seed):
     return g.sample(len(Xtr))
 
 
+def gen_mvn(Xtr, ytr, seed):
+    """CAMDA MVN baseline: per-class full covariance, plus noise drawn from the same covariance x noise level"""
+    rng = np.random.default_rng(seed)
+    Xs, ys = [], []
+    for c in np.unique(ytr):
+        Z = Xtr[ytr == c]
+        Cc = np.cov(Z, rowvar=False)
+        w, V = np.linalg.eigh((Cc + Cc.T) / 2)
+        L = V * np.sqrt(np.maximum(w, 0))
+        Xs.append(Z.mean(0) + rng.standard_normal((len(Z), Xtr.shape[1])) @ L.T * np.sqrt(1 + a.mvn_noise))
+        ys += [c] * len(Z)
+    return np.vstack(Xs), np.array(ys)
+
+
 def gen_nd(Xtr, ytr, seed, tag):
     import io, contextlib
     C, SM, LF, generate_samples = nd_modules()
@@ -143,6 +158,16 @@ def load_target(f):
 
 
 def stage_base():
+    if a.gen == "mvn":  # build the targets too
+        os.makedirs(a.target_dir, exist_ok=True)
+        for f in a.folds:
+            fx = os.path.join(a.target_dir, f"synthetic_data_split_{f}.csv")
+            if os.path.exists(fx):
+                continue
+            ids = fold_ids(f)
+            Xs, ys = gen_mvn(expr.loc[ids["train"]].values, labels.loc[ids["train"]].values, 500 + f)
+            pd.DataFrame(Xs, columns=genes).to_csv(fx, index=False)
+            pd.DataFrame({a.label_col: ys}).to_csv(fx.replace("_data_", "_labels_"), index=False)
     if a.gen == "nd":  # positive control: build the targets too
         os.makedirs(a.target_dir, exist_ok=True)
         for f in a.folds:
@@ -163,6 +188,8 @@ def stage_base():
             Xs, ys = gen_copula(X_pool[m == 1], y_pool[m == 1], k)
         elif a.gen == "lrdp":
             Xs, ys = gen_lrdp(X_pool[m == 1], y_pool[m == 1], k)
+        elif a.gen == "mvn":
+            Xs, ys = gen_mvn(X_pool[m == 1], y_pool[m == 1], k)
         else:
             Xs, ys = gen_nd(X_pool[m == 1], None, k, f"base{k}")
         np.savez_compressed(out, X=Xs.astype(np.float32), y=ys, member=m)

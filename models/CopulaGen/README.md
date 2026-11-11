@@ -154,9 +154,9 @@ Shadow-model attacks against copula_diff_k30 (15 base shadows on BRCA, 10 on COM
 ## LowRankDP (Nov 11 2026): the recommended DP generator
 
 `lowrank_dp.py` / `run_lrdp.py` (`lrdp_full.sh` reproduces everything below; outputs in `results_copula/LRDP/`).
-DP-CopulaGen and P-PGM measure a histogram per (class, gene), so every class pays the sqrt(978) noise on its own small sample. LowRankDP instead uses these Gaussian measurements (zCDP):
+All three methods add noise of the same order to every class (a record sits in one class, so class-wise measurements compose in parallel for P-PGM and DP-CopulaGen too). LowRankDP differs in *what* it measures: clipped sums that give the class mean and spread directly, instead of histograms from which they must be reconstructed. On BRCA this halves the error of the class means relative to DP-CopulaGen (Basal at eps=10: 0.19 vs 0.40 expression units) with a smaller budget share. Relative to P-PGM the class means are only 10–30 % more accurate on BRCA and 30–45 % on COMBINED, and class spreads are similar (`results_copula/LRDP/class_moment_errors.csv`). The fidelity gain over P-PGM comes mainly from continuous values (P-PGM puts every gene on 4 values) and from the modelled co-expression. Its Gaussian measurements (zCDP):
 
-- per-class sums of standardised expression in all genes. A record is in one class, so this costs the same as one pooled sum;
+- per-class sums of standardised expression in all genes, rows L2-clipped;
 - per-class sums of absolute deviations for the per-gene spread (about a quarter of the noise of squared deviations);
 - a k x k within-class covariance per class in a basis from a public cohort (`--external_counts`) or from DP-PCA;
 - the standardisation anchor (coarse fixed-bin histogram, or the public cohort) and the clipping thresholds (noisy quantiles on a fixed grid).
@@ -189,7 +189,9 @@ About 1.5 s per fold on BRCA, CPU only.
 | COMBINED | 10 | P-PGM | 0.275 | 0.00 | 0.77 / 0.09 | 0.930 | 17.65 | 1.896 | 0.20 | 0.509 | 0.50 |
 
 - MeLoMIA with synth-shadows (15 base shadows, no Optuna) against LowRankDP eps=30 on BRCA: AUC 0.495, TPR@10 % 0.100. The same pipeline gave 0.641 on the non-DP CopulaGen.
-- Not run: MAMA-MIA on P-PGM eps=30, and a shadow attack tailored to LowRankDP.
+- Positive control: the same MeLoMIA pipeline against the CAMDA MVN baseline (`--gen mvn`, per-class full covariance, noise level 0.7) on BRCA gives AUC 0.939; MahalaMIA gives 0.944 and MAMA-MIA (10 bins) 0.517. So the pipeline has power, and the attacks that break MVN find nothing in LowRankDP.
+- Model-aware shadow attack (`aware` stage; shadows are LowRankDP at the same eps, features are likelihood terms of a CopulaGen refitted on the synthetic data) against LowRankDP eps=30: AUC 0.517 ± 0.018 on BRCA (15 shadows) and 0.505 ± 0.011 on COMBINED (10 shadows). The meta-classifier reaches only 0.53 / 0.50 on the attacker's own held-out shadows. Small BRCA classes (Her2, Normal) reach 0.54 with fold SD 0.10–0.14.
+- Not run: MAMA-MIA on P-PGM eps=30, and a likelihood-ratio attack on the released class statistics.
 - The shrinkage and budget split were tuned on BRCA folds 1–2.
 - A Private-Evolution-style vote step (`--vote`) changed nothing measurable and is off by default.
 - The public cohort (the red team's COMBINED reference file, minus every patient of the private pool) mainly adds co-expression.
