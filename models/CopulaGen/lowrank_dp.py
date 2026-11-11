@@ -37,12 +37,13 @@ GRID = np.geomspace(1e-2, 1e5, 141)          # data-independent grid for the cli
 class LowRankDP:
     def __init__(self, epsilon=10.0, delta=1e-5, k=30, external: Optional[np.ndarray] = None,
                  external_y=None, shrink=0.3, clip_q=0.9, seed=0, vote_cells=0, vote_share=0.10,
-                 noise_off=(), shares=None):
+                 noise_off=(), shares=None, between=False):
         self.eps, self.delta, self.k = epsilon, delta, k
         self.external, self.external_y = external, external_y
         self.shrink, self.clip_q = shrink, clip_q
         self.rng = np.random.default_rng(seed)
         self.vote_cells, self.noise_off = vote_cells, set(noise_off)
+        self.between = between
         sh = dict(shares or (SHARES_PUBLIC if external is not None else SHARES_PRIVATE))
         if vote_cells:
             sh = {k_: v * (1 - vote_share) for k_, v in sh.items()}
@@ -167,15 +168,27 @@ class LowRankDP:
             _, _, Vt = np.linalg.svd(E, full_matrices=False)
             W = Vt[: self.k]
         else:
-            Cg = self._clip_threshold(np.linalg.norm(Zw, axis=1), n_clip)
-            Zg = self._clip_rows(Zw, Cg)
+            # between-class directions: the row space of the released class means (post-processing, no
+            # budget).  Samples also vary along these axes inside a class, so they are used as the first
+            # basis vectors and removed from the residuals before DP-PCA, which then spends its budget
+            # on what is left.
+            Qb = np.zeros((0, d))
+            if self.between and C > 1:
+                Dm = np.stack([self.mean[c] for c in self.classes])
+                Dm = Dm - Dm.mean(0)
+                Qb = np.linalg.svd(Dm, full_matrices=False)[2][: min(C - 1, self.k - 1)]
+            Zd = Zw - Zw @ Qb.T @ Qb
+            Cg = self._clip_threshold(np.linalg.norm(Zd, axis=1), n_clip)
+            Zg = self._clip_rows(Zd, Cg)
             sg = self._sigma("basis", Cg ** 2)
             ev, V = np.linalg.eigh(Zg.T @ Zg + sym_noise(rng, d, sg))
             ev, V = ev[::-1], V[:, ::-1]
             # keep the components whose eigenvalue clears the noise edge 2 sigma sqrt(d) (post-processing)
-            k_eff = int(np.clip((ev > 2.1 * sg * np.sqrt(d)).sum(), 1, self.k)) if sg > 0 else self.k
-            W = V[:, :k_eff].T
+            k_max = self.k - len(Qb)
+            k_eff = int(np.clip((ev > 2.1 * sg * np.sqrt(d)).sum(), 0 if len(Qb) else 1, k_max)) if sg > 0 else k_max
+            W = np.linalg.qr(np.vstack([Qb, V[:, :k_eff].T]).T)[0].T
             self.info["k_eff"] = k_eff
+            self.info["k_between"] = len(Qb)
         k = W.shape[0]
         # 6. class covariances in the factor space
         S = Zw @ W.T

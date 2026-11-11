@@ -194,6 +194,41 @@ About 1.5 s per fold on BRCA, CPU only.
 - The same model-aware attack against LowRankDP eps=10 (shadows trained at eps=10): AUC 0.503 ± 0.025 on BRCA and 0.497 ± 0.007 on COMBINED; 0.50 on the attacker's own held-out shadows for both.
 - Not run: MAMA-MIA on P-PGM eps=30, and a likelihood-ratio attack on the released class statistics.
 - The shrinkage and budget split were tuned on BRCA folds 1–2.
+
+### `--between`: more co-expression without public data (optional, off by default)
+
+Private-only DP-PCA keeps few components (BRCA: 1 at eps=10, 2 at eps=30; COMBINED: 4 and 10), because the noise on the 978 x 978 Gram matrix hides the rest. `--between` uses the row space of the released class means (C-1 directions, post-processing, no budget) as the first basis vectors and removes them from the residuals before DP-PCA. Share of the real within-class variance captured by the basis (folds 1-3): BRCA 4.5 % -> 11.6 % (eps=10) and 16 % -> 21 % (eps=30); COMBINED 22 % -> 30 % and 36 % -> 41 %. Thirty exact components would capture about 57 %.
+
+| Dataset | eps | Variant | within-class corr r | coex TPR / FER | TSTR acc | W1 | MAMA-MIA |
+|---|---|---|---|---|---|---|---|
+| BRCA | 30 | private | 0.489 | 0.25 / 0.11 | 0.831 | 0.102 | 0.566 |
+| BRCA | 30 | private `--between` | 0.532 | 0.35 / 0.20 | 0.793 | 0.102 | 0.569 |
+| BRCA | 10 | private | 0.118 | 0.08 / 0.08 | 0.790 | 0.153 | 0.532 |
+| BRCA | 10 | private `--between` | 0.182 | 0.14 / 0.17 | 0.777 | 0.154 | 0.536 |
+| COMBINED | 30 | private | 0.675 | 0.68 / 0.13 | 0.986 | 0.068 | 0.541 |
+| COMBINED | 30 | private `--between` | 0.691 | 0.74 / 0.20 | 0.985 | 0.068 | 0.538 |
+| COMBINED | 10 | private | 0.520 | 0.46 / 0.11 | 0.968 | 0.085 | 0.526 |
+| COMBINED | 10 | private `--between` | 0.553 | 0.54 / 0.19 | 0.965 | 0.086 | 0.524 |
+
+- Co-expression improves on both datasets; the false edge rate rises to the level of the public-cohort variant.
+- BRCA TSTR accuracy drops (0.831 -> 0.793 at eps=30). Cause not yet investigated. COMBINED is unaffected.
+- `--basis_share 0.35` gives a little more co-expression on BRCA at eps=30 (r 0.575) but worse W1 at eps=10 (0.170).
+- Reproduce with `lrdp_between.sh` (resumable). Full tables: `results_copula/LRDP/between_summary.txt`.
+
+### DP audit (Nov 11 2026)
+
+- Every statement in `LowRankDP.fit` that reads the private arrays was listed. Each one is either a Gaussian-mechanism release (class counts, anchor histogram, four clipping-quantile histograms, class sums, absolute-deviation sums, Gram matrix, per-class factor covariance) or a deterministic transform of the data with earlier releases that feeds the next release. Nothing else derived from the private data is stored or returned.
+- Budget recomputed from the noise actually drawn (sum of sensitivity^2 / 2 sigma^2 over all releases): 10 releases private-only, 7 with a public cohort, 11 with the vote step. The sum equals the zCDP budget exactly, i.e. eps = 10.000 and 30.000 at delta = 1e-5, with and without `--between`.
+- All result runs have `noise_off = []` (the ablation switch that removes noise was not used).
+- Outside the guarantee, to state in a paper:
+  - Result runs use a fixed public seed for reproducibility. A real release must use `--seed -1` (OS entropy): with a known seed the noise can be regenerated.
+  - The class label set is read from the data and is assumed public.
+  - The range [0, 25], the quantile grid and the fixed constants were chosen by someone who had seen the data; budget shares and shrinkage were tuned on BRCA folds 1-2. None of this is charged to eps.
+  - The input is a VST matrix computed jointly over all samples, so one patient slightly affects the other rows. The guarantee is with respect to the VST matrix as given. This applies to every generator on this benchmark.
+  - The run directory also contains `split_*_ids.json` and `membership_labels_split_*.csv` for evaluation. They are not DP and must not be published with the synthetic data.
+  - With a public cohort, patients of the private pool are removed from it by ID. This uses pool membership (not training-fold membership).
+  - Standard implementation caveats: floating-point Gaussian sampling and a non-cryptographic RNG (NumPy PCG64).
+- DP-CopulaGen is not DP end to end: its bin edges are training quantiles taken without noise (`dp_copula.py`, `fit`).
 - A Private-Evolution-style vote step (`--vote`) changed nothing measurable and is off by default.
 - The public cohort (the red team's COMBINED reference file, minus every patient of the private pool) mainly adds co-expression.
 
