@@ -24,10 +24,8 @@ p.add_argument("--external_counts", default=None, help="public non-member cohort
 p.add_argument("--vote", type=int, default=0, help="cells per class for the vote step (0 = off)")
 p.add_argument("--noise_off", nargs="*", default=[], help="ablation only: measurements released without noise")
 p.add_argument("--between", action="store_true", help="add the between-class directions to the basis (private-only mode)")
-p.add_argument("--v2", action="store_true", help="recommended preset: exact GDP accounting, clip quantile 0.75, and (private-only) between-class basis with shares mean 0.45 / basis 0.20 / ccov 0.10")
+p.add_argument("--v2", action="store_true", help="recommended preset (parameters only): exact GDP accounting, clip quantile 0.75, and (private-only) shares mean 0.45 / basis 0.20 / ccov 0.10")
 p.add_argument("--accounting", default="zcdp", choices=["zcdp", "gdp"], help="gdp = exact Gaussian-DP conversion (tighter)")
-p.add_argument("--winsor", type=float, default=0.0, help="per-coordinate bound on standardised values before L2 clipping (0 = off)")
-p.add_argument("--marg", type=float, default=0.0, help="blend weight for reshaping marginals toward the released pooled histogram")
 p.add_argument("--clip_q", type=float, default=0.9)
 p.add_argument("--shares", default=None, help='JSON overrides of budget shares, e.g. {"mean":0.5,"ccov":0.1}')
 p.add_argument("--basis_share", type=float, default=None, help="override the budget share of the DP-PCA step")
@@ -36,7 +34,6 @@ a = p.parse_args()
 if a.v2:
     a.accounting, a.clip_q = "gdp", 0.75
     if not a.external_counts:
-        a.between = True
         a.shares = a.shares or '{"mean":0.45,"basis":0.20,"ccov":0.10}'
 os.makedirs(a.out_dir, exist_ok=True)
 expr = load_expression(a.counts)
@@ -63,7 +60,7 @@ for f in a.folds or sorted(splits):
     tr = [s for s in splits[f][0] if s in expr.index]; te = [s for s in splits[f][1] if s in expr.index]
     t0 = time.time()
     g = LowRankDP(epsilon=a.dp_epsilon, delta=a.delta, k=a.k, external=ext, shrink=a.shrink, seed=None if a.seed < 0 else a.seed + f,
-                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, winsor=a.winsor, marg=a.marg, clip_q=a.clip_q).fit(expr.loc[tr].values, labels.loc[tr].values)
+                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q).fit(expr.loc[tr].values, labels.loc[tr].values)
     Xs, ys = g.sample()          # row count from the noisy class counts, not the exact training size
     write_fold(a.out_dir, f, Xs, ys, genes, a.label_col, tr, te)
     log["folds"][f] = {"seconds": round(time.time() - t0, 1), "info": g.info, "shares": g.shares}

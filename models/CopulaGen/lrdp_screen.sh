@@ -9,16 +9,14 @@ BB="--counts $BRCA_TSV --annot $BRCA_ANN --label_col Subtype"; CC="--counts $COM
 FOLDS="1 2 3"
 declare -A V
 if [ $SCREEN = screen ]; then      # round 1: one change at a time
+# (winsorising and marginal reshaping were also screened here and rejected; their code was removed after commit a3122af)
 V[base]=""
 V[g]="--accounting gdp"
 V[gb]="--accounting gdp --between"
 V[gbs1]="--accounting gdp --between --shares {\"mean\":0.50,\"ccov\":0.10}"
 V[gbs2]="--accounting gdp --between --shares {\"mean\":0.45,\"basis\":0.20,\"ccov\":0.10}"
-V[gbw3]="--accounting gdp --between --winsor 3"
 V[gbq75]="--accounting gdp --between --clip_q 0.75"
 V[gbq97]="--accounting gdp --between --clip_q 0.97"
-V[gbm]="--accounting gdp --between --marg 0.5"
-V[gm]="--accounting gdp --marg 0.5"
 else                               # round 2: combinations around the round-1 winners
 V[gq75]="--accounting gdp --clip_q 0.75"
 V[gbq60]="--accounting gdp --between --clip_q 0.60"

@@ -53,13 +53,13 @@ def rho_from_eps_gdp(eps, delta):
 class LowRankDP:
     def __init__(self, epsilon=10.0, delta=1e-5, k=30, external: Optional[np.ndarray] = None,
                  external_y=None, shrink=0.3, clip_q=0.9, seed=0, vote_cells=0, vote_share=0.10,
-                 noise_off=(), shares=None, between=False, accounting="zcdp", winsor=0.0, marg=0.0):
+                 noise_off=(), shares=None, between=False, accounting="zcdp"):
         self.eps, self.delta, self.k = epsilon, delta, k
         self.external, self.external_y = external, external_y
         self.shrink, self.clip_q = shrink, clip_q
         self.rng = np.random.default_rng(seed)
         self.vote_cells, self.noise_off = vote_cells, set(noise_off)
-        self.between, self.accounting, self.winsor, self.marg = between, accounting, winsor, marg
+        self.between, self.accounting = between, accounting
         sh = dict(shares or (SHARES_PUBLIC if external is not None else SHARES_PRIVATE))
         if vote_cells:
             sh = {k_: v * (1 - vote_share) for k_, v in sh.items()}
@@ -102,7 +102,6 @@ class LowRankDP:
         self.classes = [str(c) for c in np.unique(y)]
         n, d = X.shape
         self.rho = (rho_from_eps_gdp if self.accounting == "gdp" else rho_from_eps)(self.eps, self.delta)
-        self.hist = None
         rng = self.rng
         public = self.external is not None
         # 1. class counts
@@ -119,7 +118,6 @@ class LowRankDP:
             H = np.stack([(idx == j).sum(0) for j in range(25)]).astype(float)
             H += rng.standard_normal(H.shape) * self._sigma("anchor", np.sqrt(d))
             H = np.maximum(H, 0)
-            self.hist = (H.copy(), self.info.get("sigma_anchor", 0.0))      # released: reusable for free
             jm = H.argmax(0)
             cen = edges[:-1] + 0.5
             w = H * (np.abs(np.arange(25)[:, None] - jm[None]) <= 3)
@@ -130,8 +128,6 @@ class LowRankDP:
             self.lo, self.hi = np.zeros(d), np.full(d, 25.0)
         self.a, self.b = a, b
         Z = (X - a) / b
-        if self.winsor:      # fixed per-coordinate bound (data-independent) before the L2 clip
-            Z = np.clip(Z, -self.winsor, self.winsor)
         n_clip = 3 if public else 4      # number of clipping histograms sharing the 'clip' budget
         C = len(self.classes)
         pri = {c: self.n_hat[c] / n_tot for c in self.classes}
@@ -269,24 +265,6 @@ class LowRankDP:
             out = np.vstack([out, self._draw(c, n - len(out))])
         return out[self.rng.permutation(len(out))[:n]]
 
-    def _reshape_marginals(self, X):
-        """Post-processing: move each gene's pooled synthetic marginal toward the released noisy pooled
-        histogram by quantile mapping (blend weight self.marg).  Bins that do not clear 3 sigma are
-        treated as empty."""
-        H, sg = self.hist
-        H = np.where(H > 3 * sg, H, 0.0)
-        N = len(X); u = (np.arange(N) + 0.5) / N
-        out = X.copy()
-        for g in range(X.shape[1]):
-            h = H[:, g]
-            if h.sum() <= 0 or (h > 0).sum() < 3:
-                continue
-            cdf = np.concatenate([[0.0], np.cumsum(h) / h.sum()])
-            o = np.argsort(X[:, g])
-            tgt = np.interp(u, cdf, np.arange(26.0))
-            out[o, g] = X[o, g] + self.marg * (tgt - X[o, g])
-        return out
-
     def sample(self, n_total=None):
         """n_total=None: number of rows = rounded sum of the noisy class counts (no exact count is used)"""
         cs = self.classes
@@ -303,7 +281,5 @@ class LowRankDP:
             Xs.append(np.clip(self.a + self.b * Zs, self.lo, self.hi))
             ys += [c] * nc
         X, yv = np.vstack(Xs), np.array(ys)
-        if self.marg and self.hist is not None:
-            X = self._reshape_marginals(X)
         p = self.rng.permutation(len(yv))
         return X[p], yv[p]
