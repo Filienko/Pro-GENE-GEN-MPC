@@ -215,9 +215,9 @@ Private-only DP-PCA keeps few components (BRCA: 1 at eps=10, 2 at eps=30; COMBIN
 - `--basis_share 0.35` gives a little more co-expression on BRCA at eps=30 (r 0.575) but worse W1 at eps=10 (0.170).
 - Reproduce with `lrdp_between.sh` (resumable). Full tables: `results_copula/LRDP/between_summary.txt`.
 
-### `--v2`: recommended preset (Nov 12 2026)
+### v2 settings: the default (Nov 12 2026)
 
-`run_lrdp.py --v2` changes three parameters and no algorithm step. Selected on folds 1-3 (`lrdp_screen.sh`, two rounds), confirmed on 5 folds (`lrdp_v2.sh`):
+These settings are the default of `run_lrdp.py` (`--v1` restores the original ones, which the older tables and scripts in this README use). v2 changes three parameters and no algorithm step. Selected on folds 1-3 (`lrdp_screen.sh`, two rounds), confirmed on 5 folds (`lrdp_v2.sh`):
 
 1. Exact Gaussian-DP accounting (`--accounting gdp`). Every release is a Gaussian mechanism, so the composition is mu-GDP with mu^2 = 2 rho, converted to (eps, delta) exactly. Same stated (eps, delta), 17 % more rho at eps=30 and 29 % more at eps=10 (noise x0.93 and x0.88).
 2. Budget shares mean 0.45 / basis 0.20 / ccov 0.10 (private-only; was 0.40 / 0.15 / 0.20).
@@ -251,6 +251,7 @@ Private-only DP-PCA keeps few components (BRCA: 1 at eps=10, 2 at eps=30; COMBIN
 - Also screened and rejected (code removed after commit a3122af): winsorising at |z| <= 3, clip quantiles 0.97 and 0.60, reshaping marginals toward the released pooled histogram.
 - v1 under-represents the within-class variance along the class-separating axes (5-25 % of the real value; 44-83 % with `--between`). Real-to-real accuracy is 0.859.
 - The settings were selected on folds 1-3 of the evaluation data; this is not charged to eps.
+- The stored v1 outputs (`results_copula/LRDP/{BRCA,COMB}/lrdp_*`) were generated before `sample()` took its row count from the noisy class counts, so they have exactly as many rows as the training fold. `--v1` with the current code gives the same fitted model but a noisy row count (for example 873 instead of 871); the v1 rows of the screen (`screen/*/base_*`, folds 1-3) use the current code and give the same metrics within noise. All v2 outputs use the noisy row count.
 
 ### DP audit (Nov 11 2026)
 

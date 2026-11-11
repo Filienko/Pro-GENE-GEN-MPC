@@ -8,8 +8,8 @@ L=$OUT/LRDP; R=$L/redteam; export OMP_NUM_THREADS=6; mkdir -p $R
 BB="--counts $BRCA_TSV --annot $BRCA_ANN --label_col Subtype"; CC="--counts $COMB_TSV --annot $COMB_ANN --label_col cancer_type"
 for e in 10 30; do for v in btw btw35; do
   [ $v = btw35 ] && X="--basis_share 0.35" || X=""
-  [ -f $L/BRCA/lrdp_${v}_eps$e/config.json ] || python run_lrdp.py $BB --splits_yaml $BRCA_SPLITS --dp_epsilon $e --between $X --out_dir $L/BRCA/lrdp_${v}_eps$e > $L/BRCA/${v}_$e.log 2>&1 &
-  [ -f $L/COMB/lrdp_${v}_eps$e/config.json ] || python run_lrdp.py $CC --splits_yaml $COMB_SPLITS --dp_epsilon $e --between $X --out_dir $L/COMB/lrdp_${v}_eps$e > $L/COMB/${v}_$e.log 2>&1 &
+  [ -f $L/BRCA/lrdp_${v}_eps$e/config.json ] || python run_lrdp.py $BB --splits_yaml $BRCA_SPLITS --dp_epsilon $e --v1 --between $X --out_dir $L/BRCA/lrdp_${v}_eps$e > $L/BRCA/${v}_$e.log 2>&1 &
+  [ -f $L/COMB/lrdp_${v}_eps$e/config.json ] || python run_lrdp.py $CC --splits_yaml $COMB_SPLITS --dp_epsilon $e --v1 --between $X --out_dir $L/COMB/lrdp_${v}_eps$e > $L/COMB/${v}_$e.log 2>&1 &
 done; done; wait; echo GEN_DONE
 for v in btw btw35; do for e in 10 30; do
   [ -f $R/simple_BRCA_${v}_eps$e.csv ] || python redteam_attacks.py simple $BB --mama_bins 10 --target_dir $L/BRCA/lrdp_${v}_eps$e --work $R/tmp --out_csv $R/simple_BRCA_${v}_eps$e.csv > $R/simple_BRCA_${v}_eps$e.log 2>&1 &

@@ -4,10 +4,10 @@ source $(dirname $0)/env.sh; cd $(dirname $0)
 REF=$HOME/privacy/SyntheticData_MIA_PGM/RED_TCGA-COMBINED/TCGA-COMBINED_primary_tumor_star_deseq_VST_lmgenes_reference.tsv; L=$OUT/LRDP; R=$L/redteam; export OMP_NUM_THREADS=6
 BB="--counts $BRCA_TSV --annot $BRCA_ANN --label_col Subtype"; CC="--counts $COMB_TSV --annot $COMB_ANN --label_col cancer_type"
 for e in 10 30; do
-  python run_lrdp.py $BB --splits_yaml $BRCA_SPLITS --dp_epsilon $e --out_dir $L/BRCA/lrdp_priv_eps$e > $L/BRCA/priv$e.log 2>&1 &
-  python run_lrdp.py $BB --splits_yaml $BRCA_SPLITS --dp_epsilon $e --external_counts $REF --out_dir $L/BRCA/lrdp_pub_eps$e > $L/BRCA/pub$e.log 2>&1 &
-  python run_lrdp.py $CC --splits_yaml $COMB_SPLITS --dp_epsilon $e --out_dir $L/COMB/lrdp_priv_eps$e > $L/COMB/priv$e.log 2>&1 &
-  python run_lrdp.py $CC --splits_yaml $COMB_SPLITS --dp_epsilon $e --external_counts $REF --out_dir $L/COMB/lrdp_pub_eps$e > $L/COMB/pub$e.log 2>&1 &
+  python run_lrdp.py $BB --splits_yaml $BRCA_SPLITS --dp_epsilon $e --v1 --out_dir $L/BRCA/lrdp_priv_eps$e > $L/BRCA/priv$e.log 2>&1 &
+  python run_lrdp.py $BB --splits_yaml $BRCA_SPLITS --dp_epsilon $e --v1 --external_counts $REF --out_dir $L/BRCA/lrdp_pub_eps$e > $L/BRCA/pub$e.log 2>&1 &
+  python run_lrdp.py $CC --splits_yaml $COMB_SPLITS --dp_epsilon $e --v1 --out_dir $L/COMB/lrdp_priv_eps$e > $L/COMB/priv$e.log 2>&1 &
+  python run_lrdp.py $CC --splits_yaml $COMB_SPLITS --dp_epsilon $e --v1 --external_counts $REF --out_dir $L/COMB/lrdp_pub_eps$e > $L/COMB/pub$e.log 2>&1 &
 done; wait; echo GEN_DONE
 # red-team simple attacks (MAMA-MIA 10 bins + MahalaMIA); COMBINED on folds 1-3 (slow python loop)
 for v in priv pub; do for e in 10 30; do

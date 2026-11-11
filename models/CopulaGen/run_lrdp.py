@@ -24,17 +24,19 @@ p.add_argument("--external_counts", default=None, help="public non-member cohort
 p.add_argument("--vote", type=int, default=0, help="cells per class for the vote step (0 = off)")
 p.add_argument("--noise_off", nargs="*", default=[], help="ablation only: measurements released without noise")
 p.add_argument("--between", action="store_true", help="add the between-class directions to the basis (private-only mode)")
-p.add_argument("--v2", action="store_true", help="recommended preset (parameters only): exact GDP accounting, clip quantile 0.75, and (private-only) shares mean 0.45 / basis 0.20 / ccov 0.10")
-p.add_argument("--accounting", default="zcdp", choices=["zcdp", "gdp"], help="gdp = exact Gaussian-DP conversion (tighter)")
-p.add_argument("--clip_q", type=float, default=0.9)
+p.add_argument("--v1", action="store_true", help="original settings: zCDP bound, clip quantile 0.9, shares mean 0.40 / basis 0.15 / ccov 0.20")
+p.add_argument("--v2", action="store_true", help="no-op: the v2 settings (exact GDP accounting, clip quantile 0.75, private-only shares mean 0.45 / basis 0.20 / ccov 0.10) are the default")
+p.add_argument("--accounting", default=None, choices=["zcdp", "gdp"], help="gdp = exact Gaussian-DP conversion (tighter)")
+p.add_argument("--clip_q", type=float, default=None)
 p.add_argument("--shares", default=None, help='JSON overrides of budget shares, e.g. {"mean":0.5,"ccov":0.1}')
 p.add_argument("--basis_share", type=float, default=None, help="override the budget share of the DP-PCA step")
 p.add_argument("--seed", type=int, default=0, help="fixed seed for reproducible experiments; -1 = OS entropy (use this for a real release: DP needs secret noise)")
 a = p.parse_args()
-if a.v2:
-    a.accounting, a.clip_q = "gdp", 0.75
-    if not a.external_counts:
-        a.shares = a.shares or '{"mean":0.45,"basis":0.20,"ccov":0.10}'
+# defaults = v2 settings; --v1 restores the original ones; explicit flags always win
+a.accounting = a.accounting or ("zcdp" if a.v1 else "gdp")
+a.clip_q = a.clip_q or (0.9 if a.v1 else 0.75)
+if not a.v1 and not a.external_counts and a.basis_share is None:
+    a.shares = a.shares or '{"mean":0.45,"basis":0.20,"ccov":0.10}'
 os.makedirs(a.out_dir, exist_ok=True)
 expr = load_expression(a.counts)
 labels = load_labels(a.annot, expr.index, a.sample_col, a.label_col)

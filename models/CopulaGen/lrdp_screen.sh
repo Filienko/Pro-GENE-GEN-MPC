@@ -26,8 +26,8 @@ V[gbq75s2]="--accounting gdp --between --clip_q 0.75 --shares {\"mean\":0.45,\"b
 V[gq75s2]="--accounting gdp --clip_q 0.75 --shares {\"mean\":0.45,\"basis\":0.20,\"ccov\":0.10}"
 fi
 for v in "${!V[@]}"; do for e in 10 30; do
-  [ -f $L/BRCA/${v}_eps$e/config.json ] || python run_lrdp.py $BB --splits_yaml $BRCA_SPLITS --dp_epsilon $e --folds $FOLDS ${V[$v]} --out_dir $L/BRCA/${v}_eps$e > $L/BRCA/${v}_$e.log 2>&1 &
-  [ -f $L/COMB/${v}_eps$e/config.json ] || python run_lrdp.py $CC --splits_yaml $COMB_SPLITS --dp_epsilon $e --folds $FOLDS ${V[$v]} --out_dir $L/COMB/${v}_eps$e > $L/COMB/${v}_$e.log 2>&1 &
+  [ -f $L/BRCA/${v}_eps$e/config.json ] || python run_lrdp.py $BB --splits_yaml $BRCA_SPLITS --dp_epsilon $e --v1 --folds $FOLDS ${V[$v]} --out_dir $L/BRCA/${v}_eps$e > $L/BRCA/${v}_$e.log 2>&1 &
+  [ -f $L/COMB/${v}_eps$e/config.json ] || python run_lrdp.py $CC --splits_yaml $COMB_SPLITS --dp_epsilon $e --v1 --folds $FOLDS ${V[$v]} --out_dir $L/COMB/${v}_eps$e > $L/COMB/${v}_$e.log 2>&1 &
   while [ $(jobs -r | wc -l) -ge 10 ]; do sleep 1; done
 done; done; wait; echo GEN_DONE
 # MAMA-MIA / MahalaMIA on BRCA for every variant (background, 6 at a time)
