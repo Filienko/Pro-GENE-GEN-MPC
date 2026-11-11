@@ -35,3 +35,8 @@ __pycache__/
 
 # MPC-SPDZ
 mpc_spdz/
+
+# CopulaGen / LowRankDP outputs and attack caches
+models/results_copula
+models/CopulaGen/catboost_info
+models/CopulaGen/data

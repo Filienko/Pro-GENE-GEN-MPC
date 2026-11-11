@@ -19,6 +19,8 @@ CAMDA evaluation can run on them unchanged:
 | `star` | StructPGM/run_structpgm.py | current P-PGM structure: (gene, label) marginals | CPU | ~3 s |
 | `tree` | StructPGM/run_structpgm.py | Chow-Liu gene tree: (gene_i, gene_j, label) | CPU | ~3 s |
 | `hub` | StructPGM/run_structpgm.py | gene modules + eigengenes: (gene, eigengene, label) + eigengene tree | CPU | ~3 s |
+| `copula` | CopulaGen/run_copulagen.py | class-conditional low-rank Gaussian copula, smoothed per-class marginals, Gaussian or diffusion factor sampler; DP variant via `--dp_epsilon` (see CopulaGen/README.md) | CPU / GPU for diffusion | ~2 s (gauss), ~10 s GPU (diffusion) |
+| `lrdp` | CopulaGen/run_lrdp.py | LowRankDP: DP end to end; per-class gene sums and spreads (cost of one pooled sum), empirical-Bayes shrinkage, low-rank within-class covariance from DP-PCA or a public cohort (`--external_counts`). Recommended DP generator (see CopulaGen/README.md) | CPU | ~1.5 s |
 
 ## 1. Setup
 

@@ -1,0 +1,9 @@
+D=$HOME/PRO-GENE-GEN/data/aml
+S=$HOME/privacy/pgm_attack_CAMDA/data_splits/split_indices
+export BRCA_TSV=$D/BLUE_TCGA-BRCA/TCGA-BRCA_primary_tumor_star_deseq_VST_lmgenes.tsv
+export BRCA_ANN=$D/BLUE_TCGA-BRCA/TCGA-BRCA_primary_tumor_subtypes.csv
+export BRCA_SPLITS=$S/TCGA-BRCA_splits.yaml
+export COMB_TSV=$D/BLUE_TCGA-COMBINED/TCGA-COMBINED_primary_tumor_star_deseq_VST_lmgenes.tsv
+export COMB_ANN=$D/BLUE_TCGA-COMBINED/TCGA-COMBINED_primary_tumor_subtypes.csv
+export COMB_SPLITS=$S/TCGA-COMBINED_splits.yaml
+export OUT=$HOME/privacy/Pro-GENE-GEN-MPC/models/results_copula
