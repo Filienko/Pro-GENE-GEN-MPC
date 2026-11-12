@@ -253,6 +253,28 @@ These settings are the default of `run_lrdp.py` (`--v1` restores the original on
 - The settings were selected on folds 1-3 of the evaluation data; this is not charged to eps.
 - The stored v1 outputs (`results_copula/LRDP/{BRCA,COMB}/lrdp_*`) were generated before `sample()` took its row count from the noisy class counts, so they have exactly as many rows as the training fold. `--v1` with the current code gives the same fitted model but a noisy row count (for example 873 instead of 871); the v1 rows of the screen (`screen/*/base_*`, folds 1-3) use the current code and give the same metrics within noise. All v2 outputs use the noisy row count.
 
+### Ablation: from a naive DP Gaussian to LowRankDP (Nov 12 2026)
+
+`lrdp_ablation.sh` (resumable; baselines in `run_dp_gauss.py`, switches `run_lrdp.py --ablate`). Private-only, exact GDP accounting, 5 folds; every variant spends exactly its eps (autodp check). Table: `results_copula/LRDP/ablation/summary.txt`.
+
+| Variant | BRCA eps=30: W1 / SD err / wcorr r / DE TPR-FPR / TSTR | BRCA eps=10 | COMBINED eps=30 | COMBINED eps=10 |
+|---|---|---|---|---|
+| a0 textbook DP Gaussian (public worst-case bounds, full covariance per class) | 10.6 / 10.8 / 0.00 / 0.00-0.00 / 0.49 | 11.0 / 11.1 / 0.00 / 0.00-0.00 / 0.34 | 10.0 / 10.3 / 0.00 / 0.00-0.00 / 0.39 | 10.6 / 10.8 / 0.00 / 0.00-0.00 / 0.39 |
+| a1 + private standardisation and clip threshold | 2.51 / 3.30 / 0.08 / 0.18-0.02 / 0.75 | 3.97 / 4.95 / 0.03 / 0.08-0.01 / 0.67 | 1.73 / 2.25 / 0.19 / 0.61-0.06 / 0.94 | 2.95 / 3.73 / 0.07 / 0.43-0.06 / 0.91 |
+| a2 + one shared full covariance | 1.04 / 1.27 / 0.18 / 0.62-0.06 / 0.84 | 1.90 / 2.35 / 0.07 / 0.43-0.08 / 0.80 | 0.32 / 0.36 / 0.45 / 0.90-0.05 / 0.99 | 0.70 / 0.84 / 0.25 / 0.84-0.08 / 0.99 |
+| a3 low-rank covariance + per-gene spread, no shrinkage | 0.099 / 0.064 / 0.55 / 0.83-0.08 / 0.83 | 0.148 / 0.145 / 0.30 / 0.75-0.17 / 0.78 | 0.066 / 0.046 / 0.70 / 0.92-0.03 / 0.99 | 0.076 / 0.048 / 0.58 / 0.87-0.07 / 0.98 |
+| a4 a3 + shrinkage of class shifts | 0.099 / 0.065 / 0.55 / 0.77-0.04 / 0.83 | 0.142 / 0.127 / 0.32 / 0.61-0.06 / 0.80 | 0.066 / 0.046 / 0.70 / 0.91-0.03 / 0.99 | 0.077 / 0.050 / 0.58 / 0.83-0.05 / 0.98 |
+| a5 a3 + shrinkage of spread / covariance | 0.098 / 0.069 / 0.56 / 0.84-0.08 / 0.83 | 0.130 / 0.102 / 0.30 / 0.77-0.19 / 0.78 | 0.069 / 0.052 / 0.70 / 0.92-0.03 / 0.99 | 0.080 / 0.058 / 0.59 / 0.87-0.07 / 0.98 |
+| a6 full LowRankDP v2 | 0.098 / 0.071 / 0.56 / 0.79-0.04 / 0.83 | 0.129 / 0.106 / 0.33 / 0.62-0.06 / 0.80 | 0.069 / 0.053 / 0.70 / 0.91-0.03 / 0.99 | 0.081 / 0.061 / 0.59 / 0.83-0.05 / 0.98 |
+
+- Low rank is the decisive step: W1 drops 4 to 15 times against the best full-covariance baseline (a2). The noisy 978 x 978 second moment, projected to PSD, inflates every gene's variance (SD error 0.4-2.3 against 0.05-0.15) and recovers no co-expression edge.
+- Private standardisation and clipping are necessary: worst-case bounds (a0) give unusable data.
+- The full-covariance baseline a2 keeps class means, so its TSTR accuracy equals LowRankDP's (0.84 against 0.83 on BRCA eps=30). TSTR alone does not separate the methods.
+- Shrinkage of class shifts mainly trades DE false positives for recall (BRCA eps=10: FPR 0.17 -> 0.06, TPR 0.75 -> 0.61); W1 barely moves.
+- Shrinkage of spread / covariance lowers per-class W1 on BRCA (0.254 -> 0.203 at eps=10) and recovers more co-expression edges, but raises pooled W1 slightly on COMBINED (0.066 -> 0.069 at eps=30, 0.076 -> 0.081 at eps=10).
+- MAMA-MIA on BRCA: 0.49-0.50 for a0-a2 (too noisy to attack), 0.54-0.58 for a3-a6.
+- The baselines' budget split was not tuned, and their discriminator AUC is low (0.52-0.64) despite the large W1, so that metric is not informative for them.
+
 ### DP audit (Nov 11 2026)
 
 - Every statement in `LowRankDP.fit` that reads the private arrays was listed. Each one is either a Gaussian-mechanism release (class counts, anchor histogram, four clipping-quantile histograms, class sums, absolute-deviation sums, Gram matrix, per-class factor covariance) or a deterministic transform of the data with earlier releases that feeds the next release. Nothing else derived from the private data is stored or returned.

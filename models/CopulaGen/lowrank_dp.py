@@ -71,13 +71,14 @@ def eps_spent(ledger, delta):
 class LowRankDP:
     def __init__(self, epsilon=10.0, delta=1e-5, k=30, external: Optional[np.ndarray] = None,
                  external_y=None, shrink=0.3, clip_q=0.9, seed=0, vote_cells=0, vote_share=0.10,
-                 noise_off=(), shares=None, between=False, accounting="zcdp"):
+                 noise_off=(), shares=None, between=False, accounting="zcdp", ablate=()):
         self.eps, self.delta, self.k = epsilon, delta, k
         self.external, self.external_y = external, external_y
         self.shrink, self.clip_q = shrink, clip_q
         self.rng = np.random.default_rng(seed)
         self.vote_cells, self.noise_off = vote_cells, set(noise_off)
         self.between, self.accounting = between, accounting
+        self.ablate = set(ablate)       # ablation only: 'eb' = no shrinkage of class shifts, 'covshrink' = no pooling of spread / covariance
         sh = dict(shares or (SHARES_PUBLIC if external is not None else SHARES_PRIVATE))
         if vote_cells:
             sh = {k_: v * (1 - vote_share) for k_, v in sh.items()}
@@ -169,7 +170,7 @@ class LowRankDP:
         # tau_g^2 / (tau_g^2 + e_c^2).  Small classes fall back to the pooled mean where the gene
         # shows no class effect.
         self.mean = {}
-        if s_mean > 0:
+        if s_mean > 0 and "eb" not in self.ablate:
             wgt = (1 / e ** 2)[:, None]
             tau2 = np.maximum((wgt * (D ** 2 - e[:, None] ** 2)).sum(0) / wgt.sum(), 0.0)
             # a class with strong evidence of its own keeps its shift (non-negative garrote part)
@@ -188,7 +189,7 @@ class LowRankDP:
         s_var = self._sigma("var", Cu)
         vs = {c: Ucl[y == c].sum(0) + rng.standard_normal(d) * s_var for c in self.classes}
         q = sum(vs.values()) / n_tot
-        if s_var > 0:  # shrink toward the across-gene median by the estimated signal / noise ratio
+        if s_var > 0 and "covshrink" not in self.ablate:  # shrink toward the across-gene median by the estimated signal / noise ratio
             med, nz = np.median(q), (s_var / n_tot) ** 2
             tq = max(np.var(q) - nz, 1e-6)
             q = med + (q - med) * tq / (tq + nz)
@@ -197,6 +198,8 @@ class LowRankDP:
         self.var = {}
         for c in self.classes:
             w = tau ** 2 / (tau ** 2 + (s_var / self.n_hat[c]) ** 2) * self.n_hat[c] / (self.n_hat[c] + 30.0)
+            if "covshrink" in self.ablate:
+                w = 1.0
             qc = np.maximum(w * vs[c] / self.n_hat[c] + (1 - w) * q, 0.05)
             self.var[c] = (qc * np.sqrt(np.pi / 2)) ** 2
         # 5. basis for the within-class covariance
@@ -241,6 +244,8 @@ class LowRankDP:
         for c in self.classes:
             noise_rel = sc * np.sqrt(k) / self.n_hat[c] / max(np.trace(pooled) / k, 1e-9)
             lam = float(np.clip(max(self.shrink, k / self.n_hat[c], noise_rel), 0, 1))
+            if "covshrink" in self.ablate:
+                lam = 0.0
             self.S[c] = psd((1 - lam) * cov[c] + lam * pooled, 1e-4)
             self.lam[c] = lam
             expl = np.einsum("ji,jk,ki->i", W, self.S[c], W)
