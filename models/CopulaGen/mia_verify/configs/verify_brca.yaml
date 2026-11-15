@@ -1,0 +1,32 @@
+# MeLoMIA-ND exactly as configs/experiments/paper_grid_brca.yaml (the 0.75 AUC setting), plus the paper's MahalaMIA and
+# MAMA-MIA v2, on OUR imported BRCA releases (targets ours@run=<run>, see models/CopulaGen/mia_import_targets.py).
+name: verify_brca
+dataset: BRCA
+notes: "verification of the TabPFN-3.5 attack and attacks on our DP releases"
+device: cuda
+generators:
+  - "ours@run=tabpfn_35"
+  - "ours@run=tabpfn_35_dp10"
+  - "ours@run=tabpfn_35_dp30"
+  - "ours@run=tabpfn_pe10"
+  - "ours@run=tabpfn_pe30"
+  - "ours@run=lrdp_eps10"
+  - "ours@run=v2p_priv_eps30"
+  - "ours@run=pgm_eps10"
+  - "ours@run=miav_35"
+splits: [1, 2, 3, 4, 5]
+attacks:
+  melomia_nd:                      # per-record calibration, K = 30
+    class: melomia_nd
+    params:
+      n_shadows: 30
+      n_noise: 600
+      optuna_trials: 60
+      classifiers: [xgb, rf, lgbm, cat, mlp]
+      per_record_calibration: true
+  mahalamia:
+    class: mahalamia
+    params: {use_reference: true, covariance: ridge, ridge_alpha: 1.0e-4, class_shrink: 0.5}
+  mamamia_v2:
+    class: mamamia_v2
+    params: {cliques: public, edges: auto, class_centre: true}
