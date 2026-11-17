@@ -37,6 +37,15 @@ p.add_argument("--public_counts", default=None); p.add_argument("--public_annot"
 p.add_argument("--public_label_col", default="cancer_type"); p.add_argument("--public_exclude", nargs="*", default=["Breast"])
 p.add_argument("--n_public", type=int, default=600)
 p.add_argument("--n_genes", type=int, default=None, help="smoke test: first n genes only")
+# empirical (not formally DP) defences: weaken each member's pull on the prompt
+p.add_argument("--microagg", type=int, default=0, help="k > 1: prompt = MDAV cluster means of k members per subtype")
+p.add_argument("--restore", default="cov", choices=["none", "cov", "swap"],
+               help="with --microagg: none = the means only; cov = k jittered copies per mean, jitter ~ N(0, pooled "
+                    "within-cluster covariance, Ledoit-Wolf), so the prompt keeps the members' spread; swap = each mean plus the "
+                    "real within-cluster deviations of a different random cluster of the same class (non-Gaussian shape)")
+p.add_argument("--add_context_dir", default=None, help="append this (DP) release's fold rows to the prompt")
+p.add_argument("--add_context_n", type=int, default=0, help="> 0: append only this many of those rows (random)")
+p.add_argument("--shards", type=int, default=1, help="K > 1: K disjoint member shards, each prompts n/K rows")
 p.add_argument("--device", default="cuda"); p.add_argument("--seed", type=int, default=42)
 a = p.parse_args()
 
@@ -60,6 +69,54 @@ if a.public_counts:
     pl = load_labels(a.public_annot, pe.index, a.sample_col, a.public_label_col)
     public = pe.loc[pl.index[~pl.isin(a.public_exclude)], genes]
     assert not set(public.index) & set(expr.index), "public pool overlaps the private data"
+
+
+def mdav(X, k):
+    """Maximum-distance-to-average-vector microaggregation: groups of k (last one up to 2k-1)."""
+    idx, groups = np.arange(len(X)), []
+    def take(r, idx):
+        d = ((X[idx] - X[r]) ** 2).sum(1); g = idx[np.argsort(d)[:k]]; return g, np.setdiff1d(idx, g)
+    while len(idx) >= 3 * k:
+        c = X[idx].mean(0); r = idx[((X[idx] - c) ** 2).sum(1).argmax()]
+        g, idx = take(r, idx); groups.append(g)
+        s_ = idx[((X[idx] - X[r]) ** 2).sum(1).argmax()]
+        g, idx = take(s_, idx); groups.append(g)
+    if len(idx) >= 2 * k:
+        c = X[idx].mean(0); r = idx[((X[idx] - c) ** 2).sum(1).argmax()]
+        g, idx = take(r, idx); groups.append(g)
+    if len(idx):
+        groups.append(idx)
+    return groups
+
+
+def microagg_prompt(X, y, k, restore, rng):
+    """Within each class: MDAV groups -> means; optionally k jittered copies per mean with the pooled within-group
+    covariance (Ledoit-Wolf), so no prompt row is any single member."""
+    from sklearn.covariance import LedoitWolf
+    sd = X.std(0) + 1e-8; Z = X / sd
+    means, ym, devs, sizes = [], [], [], []
+    for c in np.unique(y):
+        ic = np.where(y == c)[0]
+        for g in mdav(Z[ic], k) if len(ic) >= 2 * k else [np.arange(len(ic))]:
+            rows = X[ic[g]]; means.append(rows.mean(0)); ym.append(c); devs.append(rows - rows.mean(0)); sizes.append(len(g))
+    M, ym = np.array(means), np.array(ym)
+    if restore == "none":
+        return M, ym, sizes
+    if restore == "swap":                       # deviations moved to another cluster's mean: real shape, no real row
+        out, oy, cls = [], [], np.array(ym)
+        for i in range(len(M)):
+            same = np.where((cls == cls[i]) & (np.arange(len(M)) != i))[0]
+            j = rng.choice(same) if len(same) else i
+            dv = devs[j] * np.sqrt(sizes[j] / max(sizes[j] - 1, 1))
+            out.append(M[i] + dv[rng.choice(len(dv), sizes[i], replace=len(dv) < sizes[i])]); oy += [cls[i]] * sizes[i]
+        return np.vstack(out), np.array(oy), sizes
+    D = np.vstack(devs); D *= np.sqrt(np.repeat(np.array(sizes) / np.maximum(np.array(sizes) - 1, 1), sizes))[:, None]
+    L = np.linalg.cholesky(LedoitWolf().fit(D).covariance_ + 1e-6 * np.eye(X.shape[1]))
+    reps = np.array(sizes)
+    Xp = np.repeat(M, reps, 0) + rng.standard_normal((reps.sum(), X.shape[1])) @ L.T
+    return Xp, np.repeat(ym, reps), sizes
+
+
 cfg_path = os.path.join(a.out_dir, "config.json")
 log = json.load(open(cfg_path)) if os.path.exists(cfg_path) else {"args": vars(a), "classes": classes, "folds": {}}
 for f in a.folds or sorted(splits):
@@ -76,22 +133,43 @@ for f in a.folds or sorted(splits):
         rng = np.random.default_rng(a.seed + f)
         P = public.values[rng.choice(len(public), min(a.n_public, len(public)), replace=False)]
         Xc = np.vstack([Xc, P]); y = np.r_[y, np.full(len(P), nc)]; nc += 1; n_pub = len(P)
-    t0 = time.time()
-    g = TabPFNGenerator(seed=a.seed + f, device=a.device, preprocess=a.preprocess, temperature=a.temperature,
-                        n_permutations=a.n_permutations, model_version=a.model_version)
-    g.fit(Xc, y, nc)
-    n = len(tr); keep_X, keep_y, n_gen = [], [], 0             # same row count as the training split
-    while sum(len(k) for k in keep_y) < n:
-        m = int(np.ceil((n - sum(len(k) for k in keep_y)) * len(y) / max(1, (y < len(classes)).sum()) * 1.1))
-        Xg, yg = g.sample(m); n_gen += m
-        keep_X.append(Xg[yg < len(classes)]); keep_y.append(yg[yg < len(classes)])
-    Xs, ys = np.vstack(keep_X)[:n], np.concatenate(keep_y)[:n]
+    t0 = time.time(); rng_p = np.random.default_rng(a.seed + 1000 + f); extra = {}
+    if a.microagg > 1:
+        Xc, y, sizes = microagg_prompt(Xc.astype(np.float64), y, a.microagg, a.restore, rng_p)
+        extra = {"microagg_k": a.microagg, "restore": a.restore, "n_groups": len(sizes), "max_group": int(max(sizes))}
+    if a.add_context_dir:                                       # hybrid prompt: + a DP release's rows
+        Xa = pd.read_csv(os.path.join(a.add_context_dir, f"synthetic_data_split_{f}.csv"))[genes].values
+        ya = np.array([classes.index(c) for c in pd.read_csv(os.path.join(a.add_context_dir, f"synthetic_labels_split_{f}.csv")).iloc[:, 0]])
+        if 0 < a.add_context_n < len(Xa):
+            keep = rng_p.choice(len(Xa), a.add_context_n, replace=False); Xa, ya = Xa[keep], ya[keep]
+        Xc, y = np.vstack([Xc, Xa]), np.r_[y, ya]; extra.update(added_context=a.add_context_dir, n_added=int(len(Xa)))
+    n = len(tr)
+    if a.shards > 1:                                            # disjoint, class-stratified shards
+        sh = np.empty(len(y), int)
+        for c in np.unique(y):
+            ic = rng_p.permutation(np.where(y == c)[0]); sh[ic] = np.arange(len(ic)) % a.shards
+        jobs = [(Xc[sh == j], y[sh == j], n // a.shards + (j < n % a.shards)) for j in range(a.shards)]
+        extra["shards"] = a.shards
+    else:
+        jobs = [(Xc, y, n)]
+    keep_X, keep_y, n_gen = [], [], 0
+    for jn, (Xj, yj, nj) in enumerate(jobs):
+        g = TabPFNGenerator(seed=a.seed + f + 7919 * jn, device=a.device, preprocess=a.preprocess, temperature=a.temperature,
+                            n_permutations=a.n_permutations, model_version=a.model_version)
+        g.fit(Xj, yj, nc)
+        got = 0
+        while got < nj:
+            m = int(np.ceil((nj - got) * len(yj) / max(1, (yj < len(classes)).sum()) * 1.1))
+            Xg, yg = g.sample(m); n_gen += m; ok = yg < len(classes)
+            take = min(int(ok.sum()), nj - got)
+            keep_X.append(Xg[ok][:take]); keep_y.append(yg[ok][:take]); got += take
+    Xs, ys = np.vstack(keep_X), np.concatenate(keep_y)
     save_synthetic(a.out_dir, f, Xs, np.array(classes, dtype=object)[ys], genes, a.label_col)
     json.dump({"train": tr, "test": te}, open(os.path.join(a.out_dir, f"split_{f}_ids.json"), "w"))
     pd.DataFrame({"sample_id": tr + te, "membership_label": [1] * len(tr) + [0] * len(te)}).to_csv(
         os.path.join(a.out_dir, f"membership_labels_split_{f}.csv"), index=False)
     log["folds"][str(f)] = {"seconds": round(time.time() - t0, 1), "params": g.resolved_params(),
                             "context": a.context_dir or "real training rows", "n_context": int(len(y)),
-                            "n_public": n_pub, "n_generated": n_gen}
+                            "n_public": n_pub, "n_generated": n_gen, **extra}
     json.dump(log, open(cfg_path, "w"), indent=2, default=str)
     print(f"[TabPFN] fold {f}: {Xs.shape} in {time.time() - t0:.0f}s", flush=True)

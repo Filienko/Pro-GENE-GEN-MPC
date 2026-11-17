@@ -23,6 +23,8 @@ p.add_argument("--k", type=int, default=30); p.add_argument("--shrink", type=flo
 p.add_argument("--external_counts", default=None, help="public non-member cohort (anchor + basis)")
 p.add_argument("--vote", type=int, default=0, help="cells per class for the vote step (0 = off)")
 p.add_argument("--noise_off", nargs="*", default=[], help="ablation only: measurements released without noise")
+p.add_argument("--kthr", type=float, default=2.1, help="DP-PCA keep threshold, in units of the noise spectral norm sigma*sqrt(d)")
+p.add_argument("--unclip", action="store_true", help="rescale the factor covariance by the clipping shrinkage read off the released norm histogram (post-processing)")
 p.add_argument("--ablate", nargs="*", default=[], choices=["eb", "covshrink"], help="ablation only: switch off the shrinkage of class shifts / of spread and covariance")
 p.add_argument("--between", action="store_true", help="add the between-class directions to the basis (private-only mode)")
 p.add_argument("--v1", action="store_true", help="original settings: zCDP bound, clip quantile 0.9, shares mean 0.40 / basis 0.15 / ccov 0.20")
@@ -63,7 +65,7 @@ for f in a.folds or sorted(splits):
     tr = [s for s in splits[f][0] if s in expr.index]; te = [s for s in splits[f][1] if s in expr.index]
     t0 = time.time()
     g = LowRankDP(epsilon=a.dp_epsilon, delta=a.delta, k=a.k, external=ext, shrink=a.shrink, seed=None if a.seed < 0 else a.seed + f,
-                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q, ablate=a.ablate).fit(expr.loc[tr].values, labels.loc[tr].values)
+                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q, ablate=a.ablate, unclip=a.unclip, kthr=a.kthr).fit(expr.loc[tr].values, labels.loc[tr].values)
     Xs, ys = g.sample()          # row count from the noisy class counts, not the exact training size
     write_fold(a.out_dir, f, Xs, ys, genes, a.label_col, tr, te)
     log["folds"][f] = {"seconds": round(time.time() - t0, 1), "info": g.info, "shares": g.shares}

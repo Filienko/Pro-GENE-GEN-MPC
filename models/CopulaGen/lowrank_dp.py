@@ -71,13 +71,15 @@ def eps_spent(ledger, delta):
 class LowRankDP:
     def __init__(self, epsilon=10.0, delta=1e-5, k=30, external: Optional[np.ndarray] = None,
                  external_y=None, shrink=0.3, clip_q=0.9, seed=0, vote_cells=0, vote_share=0.10,
-                 noise_off=(), shares=None, between=False, accounting="zcdp", ablate=()):
+                 noise_off=(), shares=None, between=False, accounting="zcdp", ablate=(), unclip=False, kthr=2.1):
         self.eps, self.delta, self.k = epsilon, delta, k
         self.external, self.external_y = external, external_y
         self.shrink, self.clip_q = shrink, clip_q
         self.rng = np.random.default_rng(seed)
         self.vote_cells, self.noise_off = vote_cells, set(noise_off)
         self.between, self.accounting = between, accounting
+        self.kthr = kthr                # DP-PCA: keep components whose noisy eigenvalue exceeds kthr * sigma * sqrt(d)
+        self.unclip = unclip            # undo the clipping shrinkage of the factor covariance (post-processing)
         self.ablate = set(ablate)       # ablation only: 'eb' = no shrinkage of class shifts, 'covshrink' = no pooling of spread / covariance
         sh = dict(shares or (SHARES_PUBLIC if external is not None else SHARES_PRIVATE))
         if vote_cells:
@@ -106,7 +108,17 @@ class LowRankDP:
             return float(np.sqrt(norms.shape[0]) * 0 + GRID[len(GRID) // 2])
         cum = np.cumsum(h)
         j = int(np.searchsorted(cum, self.clip_q * cum[-1]))
+        self._last_hist = h                       # the released noisy histogram (kept for post-processing)
         return float(GRID[min(j + 1, len(GRID) - 1)])
+
+    def _unclip_factor(self, C):
+        """E||s||^2 / E min(||s||, C)^2 from the released noisy norm histogram: the factor by which clipping rows at C
+        shrank the second moment.  Post-processing only (no new access to the data)."""
+        h = getattr(self, "_last_hist", None)
+        if h is None or h.sum() <= 0:
+            return 1.0
+        mid = np.sqrt(GRID[:-1] * GRID[1:])
+        return float(max(1.0, (h * mid ** 2).sum() / max((h * np.minimum(mid, C) ** 2).sum(), 1e-12)))
 
     def _sigma_clip(self, parts):
         if "clip" in self.noise_off or not np.isfinite(self.rho):
@@ -228,7 +240,7 @@ class LowRankDP:
             ev, V = ev[::-1], V[:, ::-1]
             # keep the components whose eigenvalue clears the noise edge 2 sigma sqrt(d) (post-processing)
             k_max = self.k - len(Qb)
-            k_eff = int(np.clip((ev > 2.1 * sg * np.sqrt(d)).sum(), 0 if len(Qb) else 1, k_max)) if sg > 0 else k_max
+            k_eff = int(np.clip((ev > self.kthr * sg * np.sqrt(d)).sum(), 0 if len(Qb) else 1, k_max)) if sg > 0 else k_max
             W = np.linalg.qr(np.vstack([Qb, V[:, :k_eff].T]).T)[0].T
             self.info["k_eff"] = k_eff
             self.info["k_between"] = len(Qb)
@@ -236,9 +248,10 @@ class LowRankDP:
         # 6. class covariances in the factor space
         S = Zw @ W.T
         Cs = self._clip_threshold(np.linalg.norm(S, axis=1), n_clip)
+        kappa = self._unclip_factor(Cs) if self.unclip else 1.0
         Scl = self._clip_rows(S, Cs)
         sc = self._sigma("ccov", Cs ** 2)
-        cov = {c: (Scl[y == c].T @ Scl[y == c] + sym_noise(rng, k, sc)) / self.n_hat[c] for c in self.classes}
+        cov = {c: kappa * (Scl[y == c].T @ Scl[y == c] + sym_noise(rng, k, sc)) / self.n_hat[c] for c in self.classes}
         pooled = psd(sum(pri[c] * cov[c] for c in self.classes), 1e-4)
         self.S, self.lam, self.resid = {}, {}, {}
         for c in self.classes:
@@ -251,7 +264,7 @@ class LowRankDP:
             expl = np.einsum("ji,jk,ki->i", W, self.S[c], W)
             self.resid[c] = np.maximum(self.var[c] - expl, 0.05 * self.var[c])
         self.W, self.pri = W, pri
-        self.info.update(Cz=Cz, Cu=Cu, Cs=Cs, k=k, r_between=r, rho=float(self.rho))
+        self.info.update(Cz=Cz, Cu=Cu, Cs=Cs, k=k, r_between=r, rho=float(self.rho), unclip_kappa=kappa)
         # 7. optional vote step
         self.cells = None
         if self.vote_cells:

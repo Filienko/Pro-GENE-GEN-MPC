@@ -15,7 +15,17 @@ from plot_epsweep import LAB, CHANCE, REAL_REF  # noqa: E402  (metric labels sha
 LRDP = {1: "EPSWEEP/{D}/lrdp_eps1", 5: "EPSWEEP/{D}/lrdp_eps5", 8: "EPSWEEP/{D}/lrdp_eps8", 10: "EPSWEEP/{D}/lrdp_eps10", 20: "EPSWEEP/{D}/lrdp_eps20", 30: "LRDP/v2/{D}/v2p_priv_eps30"}
 EVAL = ["EPSWEEP/{D}/eval.csv", "LRDP/v2/{D}/eval_p.csv"]
 TAB = {"tabpfn_35": ("TabPFN-3.5, gene by gene", "#1baf7a", "-"), "miav_35": ("MIAV + TabPFN-3.5", "#6250d6", "--"),
-       "tabpfn_pe_sig0": ("TabPFN-PE, noiseless votes (ceiling)", "#b8860b", ":")}
+       "tabpfn_pe_sig0": ("TabPFN-PE, noiseless votes (ceiling)", "#b8860b", ":"),
+       # empirical defences (not formally DP)
+       "tabpfn_35_ma5": ("TabPFN-3.5, 5-member cluster-mean prompt", "#0e7c86", "-."),
+       "tabpfn_35_ma10": ("TabPFN-3.5, 10-member cluster-mean prompt", "#0e7c86", ":"),
+       "tabpfn_35_launder": ("TabPFN-3.5 on its own synthetic output", "#7a5195", "-."),
+       "tabpfn_35_shard4": ("TabPFN-3.5, 4 disjoint prompt shards", "#d45087", "-."),
+       "tabpfn_35_ma5swap": ("TabPFN-3.5, cluster means + swapped deviations", "#0e7c86", "--"),
+       "tabpfn_35_ma5mean": ("TabPFN-3.5, cluster means only", "#2f4b7c", "-."),
+       "tabpfn_35_ma5lrdp": ("TabPFN-3.5, cluster means + LowRankDP eps30 rows", "#2f4b7c", ":"),
+       "tabpfn_35_ma5covlrdp": ("TabPFN-3.5, jittered cluster means + LowRankDP eps30 rows", "#2f4b7c", "--"),
+       "tabpfn_35_ma5lrdp300": ("TabPFN-3.5, cluster means + 300 LowRankDP eps30 rows", "#2f4b7c", "-")}
 # DP TabPFN: the prompt is a LowRankDP release (post-processing), so these sit at that release's eps
 TABDP = {"tabpfn_35_dp10": ("TabPFN-3.5 on LowRankDP context", "#0f8a5f", "D", 10),
          "tabpfn_35_dp30": ("TabPFN-3.5 on LowRankDP context", "#0f8a5f", "D", 30),
