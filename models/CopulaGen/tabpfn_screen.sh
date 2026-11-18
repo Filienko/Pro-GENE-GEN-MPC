@@ -31,6 +31,7 @@ gen() {  # $1 run name, rest = run_tabpfn.py args
     score $R $f &
   done
   attack $R $FOLDS
+  OMP_NUM_THREADS=16 python fused_attack.py --runs $R --folds $FOLDS --out_csv $T/attack_lr/fused_$R.csv 2>/dev/null | grep -E "fused|kNN" | sed "s/^/    /"
 }
 
 declare -A ARGS=(
@@ -42,6 +43,10 @@ declare -A ARGS=(
   [tabpfn_35_ma5mean]="--microagg 5 --restore none"         # cluster means only (~172 prompt rows)
   [tabpfn_35_ma5covlrdp]="--microagg 5 --restore cov --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30"  # ~50% real-derived rows
   [tabpfn_35_ma5lrdp300]="--microagg 5 --restore none --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 300"  # ~36%
+  [tabpfn_35_ma5dpcovlrdp]="--microagg 5 --restore dpcov --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30"  # idea 1: DP-shaped jitter, 50%
+  [tabpfn_35_ma5dpcovlrdp470]="--microagg 5 --restore dpcov --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 470"  # 1+3: ~65%
+  [tabpfn_35_ma5covlrdp470]="--microagg 5 --restore cov --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 470"  # idea 3: ~65% real-derived
+  [tabpfn_35_ma5covlrdp218]="--microagg 5 --restore cov --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 218"  # idea 3: ~80% real-derived
   [tabpfn_35_ma5lrdp]="--microagg 5 --restore none --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30"  # means + LowRankDP eps30 rows
 )
 for v in ${VARIANTS:-tabpfn_35_ma5 tabpfn_35_launder tabpfn_35_shard4 tabpfn_35_ma10}; do gen $v ${ARGS[$v]}; done

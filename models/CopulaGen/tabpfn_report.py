@@ -25,6 +25,10 @@ TAB = {"tabpfn_35": ("TabPFN-3.5, gene by gene", "#1baf7a", "-"), "miav_35": ("M
        "tabpfn_35_ma5mean": ("TabPFN-3.5, cluster means only", "#2f4b7c", "-."),
        "tabpfn_35_ma5lrdp": ("TabPFN-3.5, cluster means + LowRankDP eps30 rows", "#2f4b7c", ":"),
        "tabpfn_35_ma5covlrdp": ("TabPFN-3.5, jittered cluster means + LowRankDP eps30 rows", "#2f4b7c", "--"),
+       "tabpfn_35_ma5dpcovlrdp": ("TabPFN-3.5, DP-jittered cluster means + LowRankDP rows", "#665191", "--"),
+       "tabpfn_35_ma5dpcovlrdp470": ("TabPFN-3.5, 65% DP-jittered cluster rows + LowRankDP", "#665191", ":"),
+       "tabpfn_35_ma5covlrdp470": ("TabPFN-3.5, 65% cluster rows + LowRankDP", "#a05195", "-."),
+       "tabpfn_35_ma5covlrdp218": ("TabPFN-3.5, 80% cluster rows + LowRankDP", "#a05195", ":"),
        "tabpfn_35_ma5lrdp300": ("TabPFN-3.5, cluster means + 300 LowRankDP eps30 rows", "#2f4b7c", "-")}
 # DP TabPFN: the prompt is a LowRankDP release (post-processing), so these sit at that release's eps
 TABDP = {"tabpfn_35_dp10": ("TabPFN-3.5 on LowRankDP context", "#0f8a5f", "D", 10),
