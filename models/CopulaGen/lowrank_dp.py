@@ -71,13 +71,17 @@ def eps_spent(ledger, delta):
 class LowRankDP:
     def __init__(self, epsilon=10.0, delta=1e-5, k=30, external: Optional[np.ndarray] = None,
                  external_y=None, shrink=0.3, clip_q=0.9, seed=0, vote_cells=0, vote_share=0.10,
-                 noise_off=(), shares=None, between=False, accounting="zcdp", ablate=(), unclip=False, kthr=2.1):
+                 noise_off=(), shares=None, between=False, accounting="zcdp", ablate=(), unclip=False, kthr=2.1,
+                 pca_genes=0, xcov=False, xcov_thr=0.0):
         self.eps, self.delta, self.k = epsilon, delta, k
         self.external, self.external_y = external, external_y
         self.shrink, self.clip_q = shrink, clip_q
         self.rng = np.random.default_rng(seed)
         self.vote_cells, self.noise_off = vote_cells, set(noise_off)
         self.between, self.accounting = between, accounting
+        self.xcov_thr = xcov_thr        # soft-threshold of the extended loadings at thr * noise SD (post-processing)
+        self.xcov = xcov                # with pca_genes: extend the screened directions to all genes (noisy cross-moment)
+        self.pca_genes = pca_genes      # > 0: DP-PCA only on the m genes with the largest released within-class spread
         self.kthr = kthr                # DP-PCA: keep components whose noisy eigenvalue exceeds kthr * sigma * sqrt(d)
         self.unclip = unclip            # undo the clipping shrinkage of the factor covariance (post-processing)
         self.ablate = set(ablate)       # ablation only: 'eb' = no shrinkage of class shifts, 'covshrink' = no pooling of spread / covariance
@@ -233,15 +237,39 @@ class LowRankDP:
                 Dm = Dm - Dm.mean(0)
                 Qb = np.linalg.svd(Dm, full_matrices=False)[2][: min(C - 1, self.k - 1)]
             Zd = Zw - Zw @ Qb.T @ Qb
+            # optional gene screen: the noise edge of the DP Gram matrix grows with sqrt(#genes) and with the clip
+            # norm^2, so restricting DP-PCA to the m genes with the largest released spread q (step 4 output,
+            # post-processing, no extra budget) lets more directions clear it.  Other genes load 0 on W.
+            sel = np.argsort(-q)[: self.pca_genes] if 0 < self.pca_genes < d else np.arange(d)
+            m = len(sel)
+            Zd = Zd[:, sel]
             Cg = self._clip_threshold(np.linalg.norm(Zd, axis=1), n_clip)
             Zg = self._clip_rows(Zd, Cg)
             sg = self._sigma("basis", Cg ** 2)
-            ev, V = np.linalg.eigh(Zg.T @ Zg + sym_noise(rng, d, sg))
+            ev, V = np.linalg.eigh(Zg.T @ Zg + sym_noise(rng, m, sg))
             ev, V = ev[::-1], V[:, ::-1]
-            # keep the components whose eigenvalue clears the noise edge 2 sigma sqrt(d) (post-processing)
+            # keep the components whose eigenvalue clears the noise edge 2 sigma sqrt(m) (post-processing)
             k_max = self.k - len(Qb)
-            k_eff = int(np.clip((ev > self.kthr * sg * np.sqrt(d)).sum(), 0 if len(Qb) else 1, k_max)) if sg > 0 else k_max
-            W = np.linalg.qr(np.vstack([Qb, V[:, :k_eff].T]).T)[0].T
+            k_eff = int(np.clip((ev > self.kthr * sg * np.sqrt(m)).sum(), 0 if len(Qb) else 1, k_max)) if sg > 0 else k_max
+            Vf = np.zeros((d, k_eff)); Vf[sel] = V[:, :k_eff]
+            if self.xcov and m < d:
+                # extend the directions found on the screened genes to every gene: release the cross-moment
+                # sum_i clip(r_i) s_i^T (d x k_eff) of the full residual r_i and its screened score s_i = Zg_i V.
+                # ||Zg_i|| <= Cg and V is orthonormal, so ||s_i|| <= Cg;  r_i is clipped to Cu (the released clip
+                # norm of the same residuals, step 4), so the sensitivity is Cu * Cg.  Linear, not quadratic, in the
+                # clip norms and only d x k_eff entries: far less noise than the d x d Gram of plain DP-PCA.
+                Sx = Zg @ V[:, :k_eff]
+                Rx = self._clip_rows(Zw - Zw @ Qb.T @ Qb, Cu)
+                sx = self._sigma("xcov", Cu * Cg)
+                Vf = Rx.T @ Sx + rng.standard_normal((d, k_eff)) * sx
+                if self.xcov_thr > 0 and sx > 0:
+                    Vf = np.sign(Vf) * np.maximum(np.abs(Vf) - self.xcov_thr * sx, 0.0)
+                    keep = np.linalg.norm(Vf, axis=0) > 0
+                    Vf = Vf[:, keep] if keep.any() else Vf[:, :1]
+                    self.info["xcov_nnz"] = int((Vf != 0).sum())
+                self.info["xcov_snr"] = float(np.linalg.norm(Rx.T @ Sx) / max(sx * np.sqrt(d * k_eff), 1e-12)) if sx > 0 else None
+            W = np.linalg.qr(np.vstack([Qb, Vf.T]).T)[0].T
+            self.info["pca_genes"] = m
             self.info["k_eff"] = k_eff
             self.info["k_between"] = len(Qb)
         k = W.shape[0]

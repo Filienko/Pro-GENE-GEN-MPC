@@ -39,8 +39,9 @@ p.add_argument("--n_public", type=int, default=600)
 p.add_argument("--n_genes", type=int, default=None, help="smoke test: first n genes only")
 # empirical (not formally DP) defences: weaken each member's pull on the prompt
 p.add_argument("--microagg", type=int, default=0, help="k > 1: prompt = MDAV cluster means of k members per subtype")
+p.add_argument("--mix_alpha", type=float, default=0.3, help="with --restore mixcov: weight of the members' own within-cluster covariance (rest: dpcov)")
 p.add_argument("--jitter_dir", default=None, help="with --restore dpcov: DP release whose per-class covariance shapes the jitter")
-p.add_argument("--restore", default="cov", choices=["none", "cov", "swap", "dpcov"],
+p.add_argument("--restore", default="cov", choices=["none", "cov", "swap", "dpcov", "mixcov"],
                help="with --microagg: none = the means only; cov = k jittered copies per mean, jitter ~ N(0, pooled "
                     "within-cluster covariance, Ledoit-Wolf), so the prompt keeps the members' spread; swap = each mean plus the "
                     "real within-cluster deviations of a different random cluster of the same class (non-Gaussian shape)")
@@ -90,7 +91,7 @@ def mdav(X, k):
     return groups
 
 
-def microagg_prompt(X, y, k, restore, rng, dp=None):
+def microagg_prompt(X, y, k, restore, rng, dp=None, alpha=0.3):
     """Within each class: MDAV groups -> means; optionally k jittered copies per mean with the pooled within-group
     covariance (Ledoit-Wolf), so no prompt row is any single member."""
     from sklearn.covariance import LedoitWolf
@@ -103,6 +104,20 @@ def microagg_prompt(X, y, k, restore, rng, dp=None):
     M, ym = np.array(means), np.array(ym)
     if restore == "none":
         return M, ym, sizes
+    if restore == "mixcov":                     # blend: alpha * members' pooled within-cluster covariance (as "cov")
+        D = np.vstack(devs); D *= np.sqrt(np.repeat(np.array(sizes) / np.maximum(np.array(sizes) - 1, 1), sizes))[:, None]
+        Sr = LedoitWolf().fit(D).covariance_          # + (1 - alpha) * the DP release's scaled class covariance (as "dpcov")
+        Xd, yd = dp
+        out, oy, cls = [], [], np.array(ym)
+        for c in np.unique(cls):
+            Xc_ = Xd[yd == c] if (yd == c).sum() >= 30 else Xd
+            Sig = LedoitWolf().fit(Xc_).covariance_
+            Mc = M[cls == c]; reps = np.array(sizes)[cls == c]
+            tm = np.trace(np.cov(np.repeat(Mc, reps, 0).T)) if len(Mc) > 1 else 0.0
+            gam = float(np.clip((np.trace(Sig) - tm) / np.trace(Sig), 0.0, 1.0))
+            L = np.linalg.cholesky(alpha * Sr + (1 - alpha) * gam * Sig + 1e-6 * np.eye(X.shape[1]))
+            out.append(np.repeat(Mc, reps, 0) + rng.standard_normal((reps.sum(), X.shape[1])) @ L.T); oy += [c] * int(reps.sum())
+        return np.vstack(out), np.array(oy), sizes
     if restore == "dpcov":                      # spread from a DP release: per class, Ledoit-Wolf covariance of its rows,
         Xd, yd = dp                             # scaled so var(means) + jitter matches the release's total variance
         out, oy, cls = [], [], np.array(ym)
@@ -149,11 +164,11 @@ for f in a.folds or sorted(splits):
     t0 = time.time(); rng_p = np.random.default_rng(a.seed + 1000 + f); extra = {}
     if a.microagg > 1:
         dp = None
-        if a.restore == "dpcov":
+        if a.restore in ("dpcov", "mixcov"):
             dp = (pd.read_csv(os.path.join(a.jitter_dir, f"synthetic_data_split_{f}.csv"))[genes].values.astype(np.float64),
                   np.array([classes.index(c) for c in pd.read_csv(os.path.join(a.jitter_dir, f"synthetic_labels_split_{f}.csv")).iloc[:, 0]]))
-        Xc, y, sizes = microagg_prompt(Xc.astype(np.float64), y, a.microagg, a.restore, rng_p, dp)
-        extra = {"microagg_k": a.microagg, "restore": a.restore, "n_groups": len(sizes), "max_group": int(max(sizes))}
+        Xc, y, sizes = microagg_prompt(Xc.astype(np.float64), y, a.microagg, a.restore, rng_p, dp, a.mix_alpha)
+        extra = {"microagg_k": a.microagg, "restore": a.restore, "mix_alpha": a.mix_alpha if a.restore == "mixcov" else None, "n_groups": len(sizes), "max_group": int(max(sizes))}
     if a.add_context_dir:                                       # hybrid prompt: + a DP release's rows
         Xa = pd.read_csv(os.path.join(a.add_context_dir, f"synthetic_data_split_{f}.csv"))[genes].values
         ya = np.array([classes.index(c) for c in pd.read_csv(os.path.join(a.add_context_dir, f"synthetic_labels_split_{f}.csv")).iloc[:, 0]])

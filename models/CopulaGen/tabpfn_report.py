@@ -12,7 +12,7 @@ ROOT = sys.argv[1]; OUT = os.path.dirname(ROOT.rstrip("/"))
 sys.argv = [sys.argv[0], ROOT]
 from plot_epsweep import LAB, CHANCE, REAL_REF  # noqa: E402  (metric labels shared with the eps-sweep plots)
 
-LRDP = {1: "EPSWEEP/{D}/lrdp_eps1", 5: "EPSWEEP/{D}/lrdp_eps5", 8: "EPSWEEP/{D}/lrdp_eps8", 10: "EPSWEEP/{D}/lrdp_eps10", 20: "EPSWEEP/{D}/lrdp_eps20", 30: "LRDP/v2/{D}/v2p_priv_eps30"}
+LRDP = {0.5: "EPSWEEP/{D}/lrdp_eps0.5", 1: "EPSWEEP/{D}/lrdp_eps1", 5: "EPSWEEP/{D}/lrdp_eps5", 8: "EPSWEEP/{D}/lrdp_eps8", 10: "EPSWEEP/{D}/lrdp_eps10", 20: "EPSWEEP/{D}/lrdp_eps20", 30: "LRDP/v2/{D}/v2p_priv_eps30", 100: "EPSWEEP/{D}/lrdp_eps100", 200: "EPSWEEP/{D}/lrdp_eps200", 300: "EPSWEEP/{D}/lrdp_eps300", 1000: "EPSWEEP/{D}/lrdp_eps1000"}
 EVAL = ["EPSWEEP/{D}/eval.csv", "LRDP/v2/{D}/eval_p.csv"]
 TAB = {"tabpfn_35": ("TabPFN-3.5, gene by gene", "#1baf7a", "-"), "miav_35": ("MIAV + TabPFN-3.5", "#6250d6", "--"),
        "tabpfn_pe_sig0": ("TabPFN-PE, noiseless votes (ceiling)", "#b8860b", ":"),
@@ -27,6 +27,8 @@ TAB = {"tabpfn_35": ("TabPFN-3.5, gene by gene", "#1baf7a", "-"), "miav_35": ("M
        "tabpfn_35_ma5covlrdp": ("TabPFN-3.5, jittered cluster means + LowRankDP eps30 rows", "#2f4b7c", "--"),
        "tabpfn_35_ma5dpcovlrdp": ("TabPFN-3.5, DP-jittered cluster means + LowRankDP rows", "#665191", "--"),
        "tabpfn_35_ma5dpcovlrdp470": ("TabPFN-3.5, 65% DP-jittered cluster rows + LowRankDP", "#665191", ":"),
+       "tabpfn_35_ma5dpcovlrdp470_t13": ("TabPFN-3.5, dpcov 65% hybrid, temperature 1.3", "#665191", "-"),
+       "tabpfn_35_ma5mix30lrdp470": ("TabPFN-3.5, 65% hybrid, 0.3 real + 0.7 DP spread", "#665191", "-."),
        "tabpfn_35_ma5covlrdp470": ("TabPFN-3.5, 65% cluster rows + LowRankDP", "#a05195", "-."),
        "tabpfn_35_ma5covlrdp218": ("TabPFN-3.5, 80% cluster rows + LowRankDP", "#a05195", ":"),
        "tabpfn_35_ma5lrdp300": ("TabPFN-3.5, cluster means + 300 LowRankDP eps30 rows", "#2f4b7c", "-")}

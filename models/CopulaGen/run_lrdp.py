@@ -24,6 +24,9 @@ p.add_argument("--external_counts", default=None, help="public non-member cohort
 p.add_argument("--vote", type=int, default=0, help="cells per class for the vote step (0 = off)")
 p.add_argument("--noise_off", nargs="*", default=[], help="ablation only: measurements released without noise")
 p.add_argument("--kthr", type=float, default=2.1, help="DP-PCA keep threshold, in units of the noise spectral norm sigma*sqrt(d)")
+p.add_argument("--pca_genes", type=int, default=0, help="DP-PCA only on the m genes with the largest released within-class spread (0 = all)")
+p.add_argument("--xcov", type=float, default=0.0, help="with --pca_genes: budget share taken from the DP-PCA step to extend its directions to all genes (e.g. 0.10)")
+p.add_argument("--xcov_thr", type=float, default=0.0, help="soft-threshold the extended loadings at this many noise SDs (post-processing)")
 p.add_argument("--unclip", action="store_true", help="rescale the factor covariance by the clipping shrinkage read off the released norm histogram (post-processing)")
 p.add_argument("--ablate", nargs="*", default=[], choices=["eb", "covshrink"], help="ablation only: switch off the shrinkage of class shifts / of spread and covariance")
 p.add_argument("--between", action="store_true", help="add the between-class directions to the basis (private-only mode)")
@@ -59,13 +62,16 @@ if a.basis_share is not None:
 if a.shares:
     from lowrank_dp import SHARES_PRIVATE, SHARES_PUBLIC
     SH = dict(SH or (SHARES_PUBLIC if a.external_counts else SHARES_PRIVATE), **json.loads(a.shares))
+if a.xcov > 0:                                           # split the basis share between screened DP-PCA and the extension
+    from lowrank_dp import SHARES_PRIVATE
+    SH = dict(SH or SHARES_PRIVATE); SH["xcov"] = a.xcov; SH["basis"] = max(SH["basis"] - a.xcov, 1e-3)
 splits = load_splits(a.splits_yaml, expr.index, labels, 5, 42)
 log = {"args": vars(a), "folds": {}}
 for f in a.folds or sorted(splits):
     tr = [s for s in splits[f][0] if s in expr.index]; te = [s for s in splits[f][1] if s in expr.index]
     t0 = time.time()
     g = LowRankDP(epsilon=a.dp_epsilon, delta=a.delta, k=a.k, external=ext, shrink=a.shrink, seed=None if a.seed < 0 else a.seed + f,
-                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q, ablate=a.ablate, unclip=a.unclip, kthr=a.kthr).fit(expr.loc[tr].values, labels.loc[tr].values)
+                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q, ablate=a.ablate, unclip=a.unclip, kthr=a.kthr, pca_genes=a.pca_genes, xcov=a.xcov > 0, xcov_thr=a.xcov_thr).fit(expr.loc[tr].values, labels.loc[tr].values)
     Xs, ys = g.sample()          # row count from the noisy class counts, not the exact training size
     write_fold(a.out_dir, f, Xs, ys, genes, a.label_col, tr, te)
     log["folds"][f] = {"seconds": round(time.time() - t0, 1), "info": g.info, "shares": g.shares}
