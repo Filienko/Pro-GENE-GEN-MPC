@@ -220,7 +220,7 @@ def evaluate_fold(S, ys, Xtr, ytr, Xte, yte, ctx, rng, fast=False):
     iu = ctx["iu"]
     Rs = np.corrcoef(S, rowvar=False)[iu]
     Rs = np.nan_to_num(Rs)
-    Rt = ctx["R_te"]
+    Rt = np.nan_to_num(ctx["R_te"])          # constant features (zero-inflated data): undefined corr -> 0, as for Rs
     r["corr_mae"] = np.abs(Rs - Rt).mean()
     r["corr_r"] = np.corrcoef(Rs, Rt)[0, 1]
     for thr in (0.3, 0.5):
@@ -233,7 +233,7 @@ def evaluate_fold(S, ys, Xtr, ytr, Xte, yte, ctx, rng, fast=False):
         a, b = S[ys == c], Xte[yte == c]
         if len(a) >= 20 and len(b) >= 20:
             ra = np.nan_to_num(np.corrcoef(a, rowvar=False)[iu])
-            rb = np.corrcoef(b, rowvar=False)[iu]
+            rb = np.nan_to_num(np.corrcoef(b, rowvar=False)[iu])
             rw.append((np.corrcoef(ra, rb)[0, 1], len(b)))
     r["wcorr_r"] = sum(a * n for a, n in rw) / max(sum(n for _, n in rw), 1)
     # ---------------- DE preservation (reference: real train, as in the CAMDA bio metric)

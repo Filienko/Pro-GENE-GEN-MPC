@@ -5,7 +5,7 @@ source $(dirname $0)/env.sh; cd $(dirname $0)
 for v in $VARIANTS; do
   while :; do
     G=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | awk -F', ' '$2 >= 47000 {print $1; exit}')
-    if [ -n "$G" ] && ! ps -eo args | grep -q "[r]un_experiment.py"; then sleep 120
+    if [ -n "$G" ] && ! ps -u $USER -o args= | grep -q "^[^ ]*python[^ ]* scripts/run_experiment.py"; then sleep 120
       G2=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | awk -F', ' -v g=$G '$1 == g && $2 >= 47000 {print $1}')
       [ "$G2" = "$G" ] && break
     fi; sleep 60

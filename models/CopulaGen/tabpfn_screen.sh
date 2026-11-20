@@ -47,6 +47,13 @@ declare -A ARGS=(
   [tabpfn_35_ma5dpcovlrdp470]="--microagg 5 --restore dpcov --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 470"  # 1+3: ~65%
   [tabpfn_35_ma5dpcovlrdp470_t13]="--microagg 5 --restore dpcov --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 470 --temperature 1.3"  # recall: sampling temperature
   [tabpfn_35_ma5mix30lrdp470]="--microagg 5 --restore mixcov --mix_alpha 0.3 --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 470"  # recall: 0.3 real + 0.7 DP spread
+  # ratio series at a fixed prompt size (~869 rows, the DP release's size): share of cluster-derived rows p; p=0 is tabpfn_35_dp30
+  [tabpfn_35_dpcov_p25]="--microagg 5 --restore dpcov --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --cluster_n 217 --add_context_n 652"
+  [tabpfn_35_dpcov_p50]="--microagg 5 --restore dpcov --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --cluster_n 435 --add_context_n 434"
+  [tabpfn_35_dpcov_p75]="--microagg 5 --restore dpcov --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --cluster_n 652 --add_context_n 217"
+  [tabpfn_35_dpcov_p100]="--microagg 5 --restore dpcov --jitter_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30"
+  # 2x2 ablation: stage 1 = ND (non-private diffusion on the members), stage 2 = TabPFN on its 65% mix
+  [tabpfn_35_mix65_nd]="--microagg 5 --restore dpcov --jitter_dir $T/BRCA/nd_real --add_context_dir $T/BRCA/nd_real --add_context_n 470"
   [tabpfn_35_ma5covlrdp470]="--microagg 5 --restore cov --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 470"  # idea 3: ~65% real-derived
   [tabpfn_35_ma5covlrdp218]="--microagg 5 --restore cov --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30 --add_context_n 218"  # idea 3: ~80% real-derived
   [tabpfn_35_ma5lrdp]="--microagg 5 --restore none --add_context_dir $OUT/LRDP/v2/BRCA/v2p_priv_eps30"  # means + LowRankDP eps30 rows

@@ -26,6 +26,7 @@ resampled by noisy votes.  This lets the factor distribution depart from a Gauss
 from typing import Optional
 
 import numpy as np
+from scipy import special
 
 from dp_copula import rho_from_eps, sym_noise, psd
 
@@ -72,13 +73,17 @@ class LowRankDP:
     def __init__(self, epsilon=10.0, delta=1e-5, k=30, external: Optional[np.ndarray] = None,
                  external_y=None, shrink=0.3, clip_q=0.9, seed=0, vote_cells=0, vote_share=0.10,
                  noise_off=(), shares=None, between=False, accounting="zcdp", ablate=(), unclip=False, kthr=2.1,
-                 pca_genes=0, xcov=False, xcov_thr=0.0):
+                 pca_genes=0, xcov=False, xcov_thr=0.0, copula=False, copula_bins=0, copula_thr=3.0):
         self.eps, self.delta, self.k = epsilon, delta, k
         self.external, self.external_y = external, external_y
         self.shrink, self.clip_q = shrink, clip_q
         self.rng = np.random.default_rng(seed)
+        self.cop_rng = np.random.default_rng(None if seed is None else seed + 7777)   # copula tie jitter: own stream, so DP noise draws are unchanged
         self.vote_cells, self.noise_off = vote_cells, set(noise_off)
         self.between, self.accounting = between, accounting
+        self.copula = copula            # Gaussian-copula mode: model normal scores under a private per-feature marginal
+        self.copula_thr = copula_thr    # per-feature selection threshold, in SDs of the chi-square-like statistic
+        self.copula_bins = copula_bins  # 0 = reuse the anchor histogram (25 unit bins, no extra budget); B = own histogram, share "marg"
         self.xcov_thr = xcov_thr        # soft-threshold of the extended loadings at thr * noise SD (post-processing)
         self.xcov = xcov                # with pca_genes: extend the screened directions to all genes (noisy cross-moment)
         self.pca_genes = pca_genes      # > 0: DP-PCA only on the m genes with the largest released within-class spread
@@ -136,6 +141,52 @@ class LowRankDP:
     def _clip_rows(A, C):
         return A * np.minimum(1.0, C / (np.linalg.norm(A, axis=1) + 1e-12))[:, None]
 
+    # ------------------------------------------------------------------ copula (post-processing only)
+    def _build_cdf(self, Hc, sm, edges, a, b, n_tot):
+        """per-feature bin masses: noisy histogram with noise-only bins (< 2 sigma) dropped, mixed with the Gaussian of
+        the private anchor (a, b) by the histogram's noise-to-signal ratio lam = sigma sqrt(B) / n."""
+        B = len(edges) - 1
+        Hh = np.where(Hc > 2 * sm, Hc, 0.0)
+        tot = Hh.sum(0)
+        P = np.where(tot > 0, Hh / np.maximum(tot, 1e-12), 1.0 / B)
+        G = special.ndtr((edges[1:, None] - a) / b) - special.ndtr((edges[:-1, None] - a) / b)
+        G = np.maximum(G, 1e-12); G /= G.sum(0)
+        lam = float(np.clip(sm * np.sqrt(B) / max(n_tot, 1.0), 0.02, 1.0)) if sm > 0 else 0.0
+        P = (1 - lam) * P + lam * G
+        P = np.maximum(P, 1e-9); P /= P.sum(0)
+        # per-feature choice (post-processing): use the histogram marginal only where the released histogram departs
+        # from the anchor Gaussian by more than the DP noise explains (chi-square-like statistic on the released counts)
+        Eg = n_tot * G
+        Dg = (((Hc - Eg) ** 2) / (Eg + sm ** 2 + 1.0)).sum(0)
+        self.cop_use = Dg > B + self.copula_thr * np.sqrt(2.0 * B)
+        self.info.update(copula_features=int(self.cop_use.sum()))
+        self.cop_edges, self.cop_P = edges, P
+        self.cop_F = np.vstack([np.zeros(P.shape[1]), np.cumsum(P, 0)])
+        self.info.update(copula_bins=B, copula_lam=lam)
+
+    def _to_latent(self, X):
+        e, P, F = self.cop_edges, self.cop_P, self.cop_F
+        B = len(e) - 1
+        j = np.clip(np.searchsorted(e, X, side="right") - 1, 0, B - 1)
+        w = np.clip((X - e[j]) / (e[j + 1] - e[j]), 0.0, 1.0)
+        tie = w <= 1e-9                                  # values sitting on a bin edge (codes, zeros): spread over the bin
+        w = np.where(tie, self.cop_rng.uniform(size=X.shape), w)
+        cols = np.arange(X.shape[1])[None, :]
+        u = F[j, cols] + w * P[j, cols]
+        Zc = special.ndtri(np.clip(u, 1e-5, 1 - 1e-5))
+        return np.where(self.cop_use[None, :], Zc, (X - self.a) / self.b)
+
+    def _from_latent(self, Z):
+        e, P, F = self.cop_edges, self.cop_P, self.cop_F
+        B = len(e) - 1
+        u = np.clip(special.ndtr(Z), 1e-9, 1 - 1e-9)
+        out = self.a + self.b * Z                          # Gaussian features keep the plain DP-MVN map
+        for g in np.where(self.cop_use)[0]:
+            j = np.clip(np.searchsorted(F[:, g], u[:, g], side="right") - 1, 0, B - 1)
+            w = np.clip((u[:, g] - F[j, g]) / P[j, g], 0.0, 1.0)
+            out[:, g] = e[j] + w * (e[j + 1] - e[j])
+        return out
+
     # ------------------------------------------------------------------ fit
     def fit(self, X, y):
         y = y.astype(str)
@@ -157,7 +208,9 @@ class LowRankDP:
             edges = np.arange(0, 26.0)
             idx = np.clip(X.astype(int), 0, 24)
             H = np.stack([(idx == j).sum(0) for j in range(25)]).astype(float)
-            H += rng.standard_normal(H.shape) * self._sigma("anchor", np.sqrt(d))
+            s_anc = self._sigma("anchor", np.sqrt(d))
+            H += rng.standard_normal(H.shape) * s_anc
+            H_rel = H.copy()                      # the released noisy histogram (reused by copula mode)
             H = np.maximum(H, 0)
             jm = H.argmax(0)
             cen = edges[:-1] + 0.5
@@ -168,7 +221,21 @@ class LowRankDP:
             b = np.clip(b, 0.4, 2.5)
             self.lo, self.hi = np.zeros(d), np.full(d, 25.0)
         self.a, self.b = a, b
-        Z = (X - a) / b
+        if self.copula and not public:
+            # Gaussian copula on top of DP-MVN: a pooled private marginal per feature (post-processing of a released
+            # histogram), normal scores z = Phi^-1(F(x)); everything below then runs on z, and sample() maps back.
+            n_tot0 = sum(self.n_hat.values())
+            if self.copula_bins and self.copula_bins != 25:
+                B = int(self.copula_bins); e_ = np.linspace(0.0, 25.0, B + 1)
+                ib = np.clip((X / 25.0 * B).astype(int), 0, B - 1)
+                Hc = np.stack([(ib == j).sum(0) for j in range(B)]).astype(float)
+                sm = self._sigma("marg", np.sqrt(d)); Hc += rng.standard_normal(Hc.shape) * sm
+            else:
+                B, e_, Hc, sm = 25, np.arange(0, 26.0), H_rel, s_anc
+            self._build_cdf(Hc, sm, e_, a, b, n_tot0)
+            Z = self._to_latent(X)
+        else:
+            Z = (X - a) / b
         n_clip = 3 if public else 4      # number of clipping histograms sharing the 'clip' budget
         C = len(self.classes)
         pri = {c: self.n_hat[c] / n_tot for c in self.classes}
@@ -352,7 +419,7 @@ class LowRankDP:
             if nc <= 0:
                 continue
             Zs = self.mean[c] + self._scores(c, nc) @ self.W + self.rng.standard_normal((nc, len(self.a))) * np.sqrt(self.resid[c])
-            Xs.append(np.clip(self.a + self.b * Zs, self.lo, self.hi))
+            Xs.append(np.clip(self._from_latent(Zs) if getattr(self, "cop_F", None) is not None else self.a + self.b * Zs, self.lo, self.hi))
             ys += [c] * nc
         X, yv = np.vstack(Xs), np.array(ys)
         p = self.rng.permutation(len(yv))

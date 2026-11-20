@@ -27,6 +27,11 @@ p.add_argument("--kthr", type=float, default=2.1, help="DP-PCA keep threshold, i
 p.add_argument("--pca_genes", type=int, default=0, help="DP-PCA only on the m genes with the largest released within-class spread (0 = all)")
 p.add_argument("--xcov", type=float, default=0.0, help="with --pca_genes: budget share taken from the DP-PCA step to extend its directions to all genes (e.g. 0.10)")
 p.add_argument("--xcov_thr", type=float, default=0.0, help="soft-threshold the extended loadings at this many noise SDs (post-processing)")
+p.add_argument("--bounds_json", default=None, help="public per-column domain (adult_prep.py meta.json): each column is mapped from [lo, hi] to the [0, 24] scale the private anchor step assumes, and back at the output (no private data used)")
+p.add_argument("--copula", action="store_true", help="Gaussian-copula mode: DP-MVN on normal scores under a private per-feature marginal")
+p.add_argument("--copula_bins", type=int, default=0, help="0 = reuse the anchor histogram (no extra budget); B = own B-bin histogram")
+p.add_argument("--copula_thr", type=float, default=3.0, help="copula only for features whose released histogram departs from the Gaussian by > thr SDs")
+p.add_argument("--marg_share", type=float, default=0.08, help="budget share of the copula histogram when --copula_bins B > 0")
 p.add_argument("--unclip", action="store_true", help="rescale the factor covariance by the clipping shrinkage read off the released norm histogram (post-processing)")
 p.add_argument("--ablate", nargs="*", default=[], choices=["eb", "covshrink"], help="ablation only: switch off the shrinkage of class shifts / of spread and covariance")
 p.add_argument("--between", action="store_true", help="add the between-class directions to the basis (private-only mode)")
@@ -48,6 +53,12 @@ expr = load_expression(a.counts)
 labels = load_labels(a.annot, expr.index, a.sample_col, a.label_col)
 expr = expr.loc[labels.index]
 genes = list(expr.columns)
+LO = HI = None
+if a.bounds_json:
+    mj = json.load(open(a.bounds_json))
+    bd = {**{c: v for c, v in mj["numeric"].items()}, **{c: [0.0, len(v) - 1.0] for c, v in mj["categorical"].items()}}
+    LO, HI = np.array([bd[g][0] for g in genes]), np.array([bd[g][1] for g in genes])
+    expr = 24.0 * (expr - LO) / (HI - LO)
 ext = None
 if a.external_counts:
     e = load_expression(a.external_counts).reindex(columns=genes)
@@ -65,14 +76,19 @@ if a.shares:
 if a.xcov > 0:                                           # split the basis share between screened DP-PCA and the extension
     from lowrank_dp import SHARES_PRIVATE
     SH = dict(SH or SHARES_PRIVATE); SH["xcov"] = a.xcov; SH["basis"] = max(SH["basis"] - a.xcov, 1e-3)
+if a.copula and a.copula_bins and a.copula_bins != 25:
+    from lowrank_dp import SHARES_PRIVATE
+    SH = dict(SH or SHARES_PRIVATE); SH["marg"] = a.marg_share
 splits = load_splits(a.splits_yaml, expr.index, labels, 5, 42)
 log = {"args": vars(a), "folds": {}}
 for f in a.folds or sorted(splits):
     tr = [s for s in splits[f][0] if s in expr.index]; te = [s for s in splits[f][1] if s in expr.index]
     t0 = time.time()
     g = LowRankDP(epsilon=a.dp_epsilon, delta=a.delta, k=a.k, external=ext, shrink=a.shrink, seed=None if a.seed < 0 else a.seed + f,
-                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q, ablate=a.ablate, unclip=a.unclip, kthr=a.kthr, pca_genes=a.pca_genes, xcov=a.xcov > 0, xcov_thr=a.xcov_thr).fit(expr.loc[tr].values, labels.loc[tr].values)
+                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q, ablate=a.ablate, unclip=a.unclip, kthr=a.kthr, pca_genes=a.pca_genes, xcov=a.xcov > 0, xcov_thr=a.xcov_thr, copula=a.copula, copula_bins=a.copula_bins, copula_thr=a.copula_thr).fit(expr.loc[tr].values, labels.loc[tr].values)
     Xs, ys = g.sample()          # row count from the noisy class counts, not the exact training size
+    if LO is not None:
+        Xs = np.clip(LO + Xs * (HI - LO) / 24.0, LO, HI)
     write_fold(a.out_dir, f, Xs, ys, genes, a.label_col, tr, te)
     log["folds"][f] = {"seconds": round(time.time() - t0, 1), "info": g.info, "shares": g.shares}
     print(f"[LowRankDP] fold {f}: {Xs.shape} in {time.time() - t0:.1f}s  {({k: round(v, 3) if isinstance(v, float) else v for k, v in g.info.items()})}", flush=True)

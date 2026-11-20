@@ -50,9 +50,12 @@ labels = ann.set_index(ann[a.sample_col].astype(str))[a.label_col].astype(str)
 def score(S, ys, Xtr, ytr, Xte, yte):
     from sklearn.preprocessing import LabelEncoder
     yte_enc = LabelEncoder().fit_transform(yte)
-    acc_s, _, f_syn, *_ = ev.train_and_evaluate(S, ys, Xte, yte, yte_enc, Xtr, reset_model=True)
-    acc_r, _, f_real, *_ = ev.train_and_evaluate(Xtr, ytr, Xte, yte, yte_enc, Xtr, reset_model=True)
-    cnt, prop = Statistics.count_feature_overlap(f_syn, f_real)
+    try:      # the CAMDA classifier step assumes > 2 classes; KL below does not depend on it
+        acc_s, _, f_syn, *_ = ev.train_and_evaluate(S, ys, Xte, yte, yte_enc, Xtr, reset_model=True)
+        acc_r, _, f_real, *_ = ev.train_and_evaluate(Xtr, ytr, Xte, yte, yte_enc, Xtr, reset_model=True)
+        cnt, prop = Statistics.count_feature_overlap(f_syn, f_real)
+    except ValueError:
+        acc_s = acc_r = cnt = prop = float("nan")
     return {
         "acc_syn": acc_s, "acc_real": acc_r,
         "overlap_count": cnt, "overlap_prop": prop,

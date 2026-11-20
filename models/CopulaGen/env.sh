@@ -9,3 +9,15 @@ export COMB_TSV=$D/BLUE_TCGA-COMBINED/TCGA-COMBINED_primary_tumor_star_deseq_VST
 export COMB_ANN=$D/BLUE_TCGA-COMBINED/TCGA-COMBINED_primary_tumor_subtypes.csv
 export COMB_SPLITS=$S/TCGA-COMBINED_splits.yaml
 export OUT=$HOME/privacy/Pro-GENE-GEN-MPC/models/results_copula
+# second dataset (HF inria-soda/tabular-benchmark clf_num/Bioresponse, 1089-row balanced subset, see bio_eval.sh)
+export BIO_TSV=$HOME/privacy/hf_data/BIO/BIO_features.tsv
+export BIO_ANN=$HOME/privacy/hf_data/BIO/BIO_labels.csv
+export BIO_SPLITS=$HOME/privacy/hf_data/BIO/BIO_splits.yaml
+export BIOFULL_TSV=$HOME/privacy/hf_data/BIOFULL/BIOFULL_features.tsv
+export BIOFULL_ANN=$HOME/privacy/hf_data/BIOFULL/BIOFULL_labels.csv
+export BIOFULL_SPLITS=$HOME/privacy/hf_data/BIOFULL/BIOFULL_splits.yaml
+# third dataset (HF scikit-learn/adult-census-income, 1089-row subset, raw values; see adult_prep.py / adult_eval.sh)
+export ADULT_TSV=$HOME/privacy/hf_data/ADULT/ADULT_features.tsv
+export ADULT_ANN=$HOME/privacy/hf_data/ADULT/ADULT_labels.csv
+export ADULT_SPLITS=$HOME/privacy/hf_data/ADULT/ADULT_splits.yaml
+export ADULT_META=$HOME/privacy/hf_data/ADULT/meta.json

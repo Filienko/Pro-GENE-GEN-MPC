@@ -46,6 +46,10 @@ p.add_argument("--restore", default="cov", choices=["none", "cov", "swap", "dpco
                     "within-cluster covariance, Ledoit-Wolf), so the prompt keeps the members' spread; swap = each mean plus the "
                     "real within-cluster deviations of a different random cluster of the same class (non-Gaussian shape)")
 p.add_argument("--add_context_dir", default=None, help="append this (DP) release's fold rows to the prompt")
+p.add_argument("--cluster_n", type=int, default=0, help="with --microagg: keep only this many of the cluster-derived prompt rows (random), to vary the real-derived share at a fixed prompt size")
+p.add_argument("--clip", type=float, nargs=2, default=None, metavar=("LO", "HI"), help="clamp every sampled feature value to the public range [LO, HI] inside the generation loop (TabPFN's predictive tails are unbounded; one outlier is conditioned on by all later columns)")
+p.add_argument("--raw_cat_index", action="store_true", help="reproduce the extension bug: release class indices (0..K-1) for the columns it auto-detects as categorical, instead of their values")
+p.add_argument("--no_cat_infer", action="store_true", help="do not let the extension auto-mark low-cardinality columns categorical (only the label is); every feature goes to the regressor")
 p.add_argument("--add_context_n", type=int, default=0, help="> 0: append only this many of those rows (random)")
 p.add_argument("--shards", type=int, default=1, help="K > 1: K disjoint member shards, each prompts n/K rows")
 p.add_argument("--device", default="cuda"); p.add_argument("--seed", type=int, default=42)
@@ -57,6 +61,52 @@ import mia  # noqa: E402,F401
 pkg = types.ModuleType("mia.generators"); pkg.__path__ = [os.path.join(a.mia_repo, "mia", "generators")]
 sys.modules["mia.generators"] = pkg
 from mia.generators.tabpfn import TabPFNGenerator  # noqa: E402
+import torch  # noqa: E402
+from tabpfn_extensions.unsupervised import TabPFNUnsupervisedModel as _UM  # noqa: E402
+if a.no_cat_infer:
+    import tabpfn_extensions.unsupervised.unsupervised as _um
+    _um.infer_categorical_features = lambda X, categorical_features=None, *aa, **kk: list(categorical_features or [])
+if not a.raw_cat_index:
+    # fit() auto-marks low-cardinality columns categorical (infer_categorical_features); impute_() then samples a class
+    # INDEX from the classifier's probabilities and writes it into the table as if it were the value.  Map each such
+    # index back to the column's value (TabPFNClassifier orders classes as the sorted unique training values).  No-op for
+    # BRCA genes (continuous); the label column (codes 0..C-1, all present) maps to itself.
+    _imp = _UM.impute_
+    def _impute_values(self, X, *args, **kw):
+        miss = torch.isnan(X) if torch.is_tensor(X) else None
+        out = _imp(self, X, *args, **kw)
+        g = torch.Generator().manual_seed(int(a.seed))
+        for col in range(out.shape[1]):
+            if self.use_classifier_(col, self.X_[:, col]):
+                # density_() fits the classifier on y.astype(int), so class k = the k-th sorted TRUNCATED value; map the
+                # index to its integer class, then to one of the prompt values that truncate to it (by frequency)
+                xc = self.X_[:, col][~torch.isnan(self.X_[:, col])]
+                xi = xc.numpy().astype(int); cls = np.unique(xi)
+                m = miss[:, col] if miss is not None else torch.ones(len(out), dtype=torch.bool)
+                idx = out[m, col].round().long().clamp(0, len(cls) - 1).numpy()
+                new = np.empty(len(idx), dtype=np.float32)
+                for k in np.unique(idx):
+                    pool = xc.numpy()[xi == cls[k]]; w = np.where(idx == k)[0]
+                    new[w] = pool[torch.randint(len(pool), (len(w),), generator=g).numpy()]
+                out[m, col] = torch.as_tensor(new, dtype=out.dtype)
+        return out
+    _UM.impute_ = _impute_values
+if a.clip is not None:                      # patch the extension's per-column sampler (the generator's subclass calls super())
+    from tabpfn_extensions.unsupervised import TabPFNUnsupervisedModel as _U
+    _orig = _U.sample_from_model_prediction_
+    def _clipped(self, *args, **kw):
+        pred, sampled = _orig(self, *args, **kw)
+        if isinstance(pred, dict):           # regressor output = a feature column (the label column is the classifier's)
+            # impute_() draws the released value itself, from the permutation-merged density via criterion.sample(), so
+            # clamp there (class-wide, once); the per-permutation draw returned here is clamped too
+            C = type(pred["criterion"])
+            if not getattr(C, "_clip_patched", False):
+                _s = C.sample
+                C.sample = lambda this, *aa, **kk: _s(this, *aa, **kk).clamp(a.clip[0], a.clip[1])
+                C._clip_patched = True
+            sampled = sampled.clamp(a.clip[0], a.clip[1])
+        return pred, sampled
+    _U.sample_from_model_prediction_ = _clipped
 
 os.makedirs(a.out_dir, exist_ok=True)
 expr = load_expression(a.counts)
@@ -168,7 +218,9 @@ for f in a.folds or sorted(splits):
             dp = (pd.read_csv(os.path.join(a.jitter_dir, f"synthetic_data_split_{f}.csv"))[genes].values.astype(np.float64),
                   np.array([classes.index(c) for c in pd.read_csv(os.path.join(a.jitter_dir, f"synthetic_labels_split_{f}.csv")).iloc[:, 0]]))
         Xc, y, sizes = microagg_prompt(Xc.astype(np.float64), y, a.microagg, a.restore, rng_p, dp, a.mix_alpha)
-        extra = {"microagg_k": a.microagg, "restore": a.restore, "mix_alpha": a.mix_alpha if a.restore == "mixcov" else None, "n_groups": len(sizes), "max_group": int(max(sizes))}
+        if 0 < a.cluster_n < len(Xc):
+            keep = rng_p.choice(len(Xc), a.cluster_n, replace=False); Xc, y = Xc[keep], y[keep]
+        extra = {"microagg_k": a.microagg, "restore": a.restore, "mix_alpha": a.mix_alpha if a.restore == "mixcov" else None, "n_groups": len(sizes), "max_group": int(max(sizes)), "n_cluster_rows": int(len(y))}
     if a.add_context_dir:                                       # hybrid prompt: + a DP release's rows
         Xa = pd.read_csv(os.path.join(a.add_context_dir, f"synthetic_data_split_{f}.csv"))[genes].values
         ya = np.array([classes.index(c) for c in pd.read_csv(os.path.join(a.add_context_dir, f"synthetic_labels_split_{f}.csv")).iloc[:, 0]])
