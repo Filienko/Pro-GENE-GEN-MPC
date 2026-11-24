@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 """Generate with LowRankDP, fold by fold (same output layout as run_copulagen.py).
 
+The research version with every experimental switch.  The DP-MVN generator itself, alone and readable, is dp_mvn.py
+(bit-identical releases with --v2); the Gaussian-copula version is the wrapper dp_mvn_copula.py.
+
 python run_lrdp.py --counts $BRCA_TSV --annot $BRCA_ANN --label_col Subtype --splits_yaml $BRCA_SPLITS \
     --dp_epsilon 10 --k 30 [--external_counts REF.tsv] [--vote 20] --out_dir $OUT/BRCA/lrdp_eps10
 """
@@ -28,10 +31,6 @@ p.add_argument("--pca_genes", type=int, default=0, help="DP-PCA only on the m ge
 p.add_argument("--xcov", type=float, default=0.0, help="with --pca_genes: budget share taken from the DP-PCA step to extend its directions to all genes (e.g. 0.10)")
 p.add_argument("--xcov_thr", type=float, default=0.0, help="soft-threshold the extended loadings at this many noise SDs (post-processing)")
 p.add_argument("--bounds_json", default=None, help="public per-column domain (adult_prep.py meta.json): each column is mapped from [lo, hi] to the [0, 24] scale the private anchor step assumes, and back at the output (no private data used)")
-p.add_argument("--copula", action="store_true", help="Gaussian-copula mode: DP-MVN on normal scores under a private per-feature marginal")
-p.add_argument("--copula_bins", type=int, default=0, help="0 = reuse the anchor histogram (no extra budget); B = own B-bin histogram")
-p.add_argument("--copula_thr", type=float, default=3.0, help="copula only for features whose released histogram departs from the Gaussian by > thr SDs")
-p.add_argument("--marg_share", type=float, default=0.08, help="budget share of the copula histogram when --copula_bins B > 0")
 p.add_argument("--unclip", action="store_true", help="rescale the factor covariance by the clipping shrinkage read off the released norm histogram (post-processing)")
 p.add_argument("--ablate", nargs="*", default=[], choices=["eb", "covshrink"], help="ablation only: switch off the shrinkage of class shifts / of spread and covariance")
 p.add_argument("--between", action="store_true", help="add the between-class directions to the basis (private-only mode)")
@@ -76,16 +75,13 @@ if a.shares:
 if a.xcov > 0:                                           # split the basis share between screened DP-PCA and the extension
     from lowrank_dp import SHARES_PRIVATE
     SH = dict(SH or SHARES_PRIVATE); SH["xcov"] = a.xcov; SH["basis"] = max(SH["basis"] - a.xcov, 1e-3)
-if a.copula and a.copula_bins and a.copula_bins != 25:
-    from lowrank_dp import SHARES_PRIVATE
-    SH = dict(SH or SHARES_PRIVATE); SH["marg"] = a.marg_share
 splits = load_splits(a.splits_yaml, expr.index, labels, 5, 42)
 log = {"args": vars(a), "folds": {}}
 for f in a.folds or sorted(splits):
     tr = [s for s in splits[f][0] if s in expr.index]; te = [s for s in splits[f][1] if s in expr.index]
     t0 = time.time()
     g = LowRankDP(epsilon=a.dp_epsilon, delta=a.delta, k=a.k, external=ext, shrink=a.shrink, seed=None if a.seed < 0 else a.seed + f,
-                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q, ablate=a.ablate, unclip=a.unclip, kthr=a.kthr, pca_genes=a.pca_genes, xcov=a.xcov > 0, xcov_thr=a.xcov_thr, copula=a.copula, copula_bins=a.copula_bins, copula_thr=a.copula_thr).fit(expr.loc[tr].values, labels.loc[tr].values)
+                  vote_cells=a.vote, noise_off=a.noise_off, between=a.between, shares=SH, accounting=a.accounting, clip_q=a.clip_q, ablate=a.ablate, unclip=a.unclip, kthr=a.kthr, pca_genes=a.pca_genes, xcov=a.xcov > 0, xcov_thr=a.xcov_thr).fit(expr.loc[tr].values, labels.loc[tr].values)
     Xs, ys = g.sample()          # row count from the noisy class counts, not the exact training size
     if LO is not None:
         Xs = np.clip(LO + Xs * (HI - LO) / 24.0, LO, HI)

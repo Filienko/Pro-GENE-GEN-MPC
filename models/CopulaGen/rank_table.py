@@ -14,7 +14,7 @@ import numpy as np, pandas as pd
 O = os.environ["OUT"]; HERE = os.path.dirname(os.path.abspath(__file__))
 LOW, HIGH, HALF = "low", "high", "half"
 METHODS = [("mvn", "MVN"), ("tabpfn_35", "TabPFN-3.5"), ("tabpfn_35_dpcov65", "Hybrid dpcov 65%"),
-           ("lrdp_eps1000", "DP-MVN ε1000"), ("lrdp_eps100", "DP-MVN ε100"), ("lrdp_eps30", "DP-MVN ε30"),
+           ("lrdp_eps10000", "DP-MVN ε10000"), ("lrdp_eps1000", "DP-MVN ε1000"), ("lrdp_eps100", "DP-MVN ε100"), ("lrdp_eps30", "DP-MVN ε30"),
            ("lrdp_eps10", "DP-MVN ε10"), ("lrdpc_eps1000", "DP-MVN-C ε1000"), ("lrdpc_eps100", "DP-MVN-C ε100"),
            ("lrdpc_eps30", "DP-MVN-C ε30"), ("lrdpc_eps10", "DP-MVN-C ε10"), ("pgm_eps10", "P-PGM ε10")]
 GROUPS = {"privacy": ["Strongest attack"],
@@ -41,7 +41,7 @@ def brca():
     D = ev.groupby("run")[list(EVCOL)].mean().rename(columns=EVCOL)
     C = pd.read_csv(f"{O}/TABPFN/BRCA_compare.csv").set_index("Method")
     lab = {"MVN (CAMDA baseline, noise 0.7)": "mvn", "TabPFN-3.5": "tabpfn_35", "TabPFN hybrid prompt, dpcov 65%": "tabpfn_35_dpcov65",
-           "DP-MVN ε=1000": "lrdp_eps1000", "DP-MVN ε=100": "lrdp_eps100", "DP-MVN ε=30": "lrdp_eps30", "DP-MVN ε=10": "lrdp_eps10",
+           "DP-MVN ε=10000": "lrdp_eps10000", "DP-MVN ε=1000": "lrdp_eps1000", "DP-MVN ε=100": "lrdp_eps100", "DP-MVN ε=30": "lrdp_eps30", "DP-MVN ε=10": "lrdp_eps10",
            "Private-PGM ε=10": "pgm_eps10", "DP-MVN-copula ε=1000": "lrdpc_eps1000", "DP-MVN-copula ε=100": "lrdpc_eps100",
            "DP-MVN-copula ε=30": "lrdpc_eps30", "DP-MVN-copula ε=10": "lrdpc_eps10"}
     for m, r in lab.items():
@@ -101,7 +101,7 @@ for name, fn in [("BRCA", brca), ("Bioresponse (BIO)", bio), ("Adult", adult)]:
     out.append("")
 open(f"{O}/RANKS.md", "w").write("\n".join(out))
 # per-metric orderings (no averages): row = metric, columns = rank 1..8
-SHORT = {"mvn": "MVN", "tabpfn_35": "TabPFN", "tabpfn_35_dpcov65": "Hybrid", "lrdp_eps1000": "DP-MVN ε1000", "lrdp_eps100": "DP-MVN ε100",
+SHORT = {"mvn": "MVN", "tabpfn_35": "TabPFN", "tabpfn_35_dpcov65": "Hybrid", "lrdp_eps10000": "DP-MVN ε10000", "lrdp_eps1000": "DP-MVN ε1000", "lrdp_eps100": "DP-MVN ε100",
          "lrdp_eps30": "DP-MVN ε30", "lrdp_eps10": "DP-MVN ε10", "pgm_eps10": "P-PGM ε10",
          "lrdpc_eps1000": "DP-MVN-C ε1000", "lrdpc_eps100": "DP-MVN-C ε100", "lrdpc_eps30": "DP-MVN-C ε30", "lrdpc_eps10": "DP-MVN-C ε10"}
 NOTE = {LOW: "↓", HIGH: "↑", HALF: "→0.5"}

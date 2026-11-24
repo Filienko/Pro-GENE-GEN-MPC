@@ -12,7 +12,7 @@ ROOT = sys.argv[1]; OUT = os.path.dirname(ROOT.rstrip("/"))
 sys.argv = [sys.argv[0], ROOT]
 from plot_epsweep import LAB, CHANCE, REAL_REF  # noqa: E402  (metric labels shared with the eps-sweep plots)
 
-LRDP = {0.5: "EPSWEEP/{D}/lrdp_eps0.5", 1: "EPSWEEP/{D}/lrdp_eps1", 5: "EPSWEEP/{D}/lrdp_eps5", 8: "EPSWEEP/{D}/lrdp_eps8", 10: "EPSWEEP/{D}/lrdp_eps10", 20: "EPSWEEP/{D}/lrdp_eps20", 30: "LRDP/v2/{D}/v2p_priv_eps30", 50: "EPSWEEP/{D}/lrdp_eps50", 70: "EPSWEEP/{D}/lrdp_eps70", 100: "EPSWEEP/{D}/lrdp_eps100", 200: "EPSWEEP/{D}/lrdp_eps200", 300: "EPSWEEP/{D}/lrdp_eps300", 1000: "EPSWEEP/{D}/lrdp_eps1000"}
+LRDP = {0.5: "EPSWEEP/{D}/lrdp_eps0.5", 1: "EPSWEEP/{D}/lrdp_eps1", 5: "EPSWEEP/{D}/lrdp_eps5", 8: "EPSWEEP/{D}/lrdp_eps8", 10: "EPSWEEP/{D}/lrdp_eps10", 20: "EPSWEEP/{D}/lrdp_eps20", 30: "LRDP/v2/{D}/v2p_priv_eps30", 50: "EPSWEEP/{D}/lrdp_eps50", 70: "EPSWEEP/{D}/lrdp_eps70", 100: "EPSWEEP/{D}/lrdp_eps100", 200: "EPSWEEP/{D}/lrdp_eps200", 300: "EPSWEEP/{D}/lrdp_eps300", 1000: "EPSWEEP/{D}/lrdp_eps1000", 10000: "EPSWEEP/{D}/lrdp_eps10000"}
 EVAL = ["EPSWEEP/{D}/eval.csv", "LRDP/v2/{D}/eval_p.csv"]
 TAB = {"tabpfn_35": ("TabPFN-3.5, gene by gene", "#1baf7a", "-"), "miav_35": ("MIAV + TabPFN-3.5", "#6250d6", "--"),
        "tabpfn_pe_sig0": ("TabPFN-PE, noiseless votes (ceiling)", "#b8860b", ":"),
