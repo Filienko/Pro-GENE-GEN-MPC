@@ -60,8 +60,14 @@ MeLoMIA-ND, MAMA-MIA v2, MahalaMIA, kNN-LR and fused; Bioresponse and Adult only
 | DP-MVN ε=0.5 | 0.504 | 0.498 | 0.501 | 0.494 | 0.499 | 0.512 (0.529) | 0.016 |
 | Private-PGM ε=10 | 0.506 | 0.512 | 0.504 | 0.511 | 0.512 | 0.520 (0.543) | 0.019 |
 
-DP-MVN with copula marginals (`dp_mvn_copula.py`): BRCA re-run with the wrapper in progress (`copula_eval.sh`); its
-rows will appear in `BRCA_compare.md`.
+DP-MVN with copula marginals (`dp_mvn_copula.py`, 25-bin marginals on 8 % of the budget, threshold 10):
+
+| Generator | MeLoMIA-ND | MAMA-MIA v2 | MahalaMIA | kNN-LR | Fused | **Strongest (worst)** | Fused TPR@1%FPR |
+|---|---|---|---|---|---|---|---|
+| DP-MVN-copula ε=1000 | 0.636 | 0.614 | 0.551 | 0.575 | 0.673 | 0.675 (0.698) | 0.046 |
+| DP-MVN-copula ε=100 | 0.536 | 0.599 | 0.515 | 0.542 | 0.593 | 0.602 (0.627) | 0.031 |
+| DP-MVN-copula ε=30 | 0.525 | 0.572 | 0.507 | 0.521 | 0.557 | 0.572 (0.591) | 0.028 |
+| DP-MVN-copula ε=10 | 0.508 | 0.553 | 0.507 | 0.511 | 0.532 | 0.555 (0.590) | 0.021 |
 
 Generator-aware synth-shadow (`redteam_attacks.py aware`, shadows = DP-MVN itself; older `--between` variant of the
 v2 settings, ensemble of xgb / rf / cat):
