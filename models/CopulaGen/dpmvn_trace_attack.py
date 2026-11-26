@@ -115,9 +115,13 @@ def log_lr(t, dl):
     return dl * t - dl ** 2 / 2
 
 
-def trace_scores(X, y, S, yS, eps, delta=1e-5, q=None, kmax=60, use_dp=True, use_clip=True, use_shrink=True):
-    """per-candidate scores (dict of arrays) for candidates X (labels y) against the release S (labels yS)"""
+def trace_scores(X, y, S, yS, eps, delta=1e-5, q=None, kmax=60, use_dp=True, use_clip=True, use_shrink=True,
+                 sigma_mean=None, sigma_var=None, n_member=None):
+    """per-candidate scores (dict of arrays) for candidates X (labels y) against the release S (labels yS).
+    sigma_mean / sigma_var: the mechanism's noise SD of the mean / spread step (default: from eps and dp_mvn's shares).
+    n_member: training-set size when the release has a different number of rows (default: the release size)."""
     N, d = X.shape; n_syn = len(S)
+    n_mem = float(n_member or n_syn); scale = n_syn / n_mem          # synthetic rows per training row
     classes = [c for c in np.unique(y) if (yS == c).sum() >= 3]
     rho = rho_from_eps(eps, delta) if (use_dp and eps is not None and np.isfinite(eps)) else np.inf
     # the mechanism's standardisation and row clipping, recomputed on the pool (80 % of it are the members)
@@ -126,12 +130,15 @@ def trace_scores(X, y, S, yS, eps, delta=1e-5, q=None, kmax=60, use_dp=True, use
     w = np.minimum(1.0, Cz / nz) if use_clip else np.ones(N)
     Xw = a + b * Z * w[:, None]
     s_mean = Cz / np.sqrt(2 * rho * SH["mean"]) if np.isfinite(rho) else 0.0           # z units, per class sum
-    nc = {c: int((yS == c).sum()) for c in classes}                                       # ~ the noisy class counts
+    if sigma_mean is not None:
+        s_mean = float(sigma_mean) if use_dp else 0.0
+    ns = {c: int((yS == c).sum()) for c in classes}                                       # synthetic rows per class
+    nc = {c: ns[c] / scale for c in classes}                                              # ~ the noisy class counts
     Sm = {c: S[yS == c].mean(0) for c in classes}
     # shrinkage of the class shifts (dp_mvn step 4), on the synthetic shifts minus their sampling variance
     mu = S.mean(0)
     Dz = np.stack([(Sm[c] - mu) / b for c in classes])
-    samp = np.stack([S[yS == c].var(0) / nc[c] for c in classes]) / b ** 2
+    samp = np.stack([S[yS == c].var(0) / ns[c] for c in classes]) / b ** 2
     e2 = np.array([(s_mean / nc[c]) ** 2 for c in classes])[:, None]
     if use_shrink and s_mean > 0:
         wg = 1 / e2[:, 0]
@@ -151,7 +158,7 @@ def trace_scores(X, y, S, yS, eps, delta=1e-5, q=None, kmax=60, use_dp=True, use
     k = gap_rank(s_ ** 2 / len(Rt), min(kmax, len(Rt) // 4)) if q is None else int(q)
     V = Vt[:k].T
     Fp = Rt @ V; Sp = Fp.T @ Fp / len(Rt)
-    kap = max(N - n_syn, 0) / N                         # pool reference: its non-member share adds noise to r
+    kap = max(N - n_mem, 0) / N                         # pool reference: its non-member share adds noise to r
     out = {"trace_T": np.zeros(N)}
     t1, d1, t2, d2 = np.zeros(N), np.zeros(N), np.zeros(N), np.zeros(N)
     # second-moment step constants (dp_mvn step 5)
@@ -159,22 +166,24 @@ def trace_scores(X, y, S, yS, eps, delta=1e-5, q=None, kmax=60, use_dp=True, use
     Uabs = np.abs(zw_all); nu = np.linalg.norm(Uabs, axis=1); Cu = float(np.quantile(nu, 0.75))
     wu = np.minimum(1.0, Cu / nu) if use_clip else np.ones(N)
     s_var = Cu / np.sqrt(2 * rho * SH["var"]) if np.isfinite(rho) else 0.0
+    if sigma_var is not None:
+        s_var = float(sigma_var) if use_dp else 0.0
     q_syn = {c: np.sqrt(2 / np.pi) * S[yS == c].std(0) / b for c in classes}            # released MAD, z units
     tau = 0.15 * np.median(np.mean([q_syn[c] for c in classes], 0))
     for ci, c in enumerate(classes):
         i = np.where(y == c)[0]
         if len(i) < 3:
             continue
-        n_c = nc[c]; Rc = Rt[yR == c]
-        # ---- first moment
-        Fc = Rc @ V; lam = float(np.clip(max(0.3, k / n_c), 0, 1))
-        Sc = (1 - lam) * Fc.T @ Fc / n_c + lam * Sp
+        n_c, m_c = nc[c], ns[c]; Rc = Rt[yR == c]
+        # ---- first moment (sampling noise of the synthetic mean: m_c rows; reference noise: kap / n_c)
+        Fc = Rc @ V; lam = float(np.clip(max(0.3, k / m_c), 0, 1))
+        Sc = (1 - lam) * Fc.T @ Fc / m_c + lam * Sp
         res = np.maximum(((Rc - Fc @ V.T) ** 2).mean(0), 1e-4)
         ev, P = np.linalg.eigh(Sc); L = V @ (P * np.sqrt(np.maximum(ev, 0)))             # Sigma_c = L L' + diag(res)
-        Lx = L * np.sqrt((1 + kap) / n_c)
-        Dx = res * (1 + kap) / n_c + (s_mean * b / (n_c * sd)) ** 2
+        Lx = L * np.sqrt(1 / m_c + kap / n_c)
+        Dx = res * (1 / m_c + kap / n_c) + (s_mean * b / (n_c * sd)) ** 2
         A = woodbury(Lx, Dx)
-        coef = 1 / n_syn + shr[ci] * (1 / n_c - 1 / n_syn)
+        coef = 1 / n_mem + shr[ci] * (1 / n_c - 1 / n_mem)
         Xc = Xw[i] / sd; r = loo_mean(Xc); u = Xc - r; v = Sm[c][None] / sd - r
         uc = u * (coef * n_c)[None]; Au = A(uc)
         T = (Au * v).sum(1)
@@ -183,15 +192,15 @@ def trace_scores(X, y, S, yS, eps, delta=1e-5, q=None, kmax=60, use_dp=True, use
         wc = tau ** 2 / (tau ** 2 + (s_var / n_c) ** 2) * n_c / (n_c + 30.0)
         Uc = Uabs[i] * wu[i][:, None]; ru = loo_mean(Uc); ru_pool = loo_mean(Uabs * wu[:, None])[i]
         u2 = Uc - ru; v2 = q_syn[c][None] - (wc * ru + (1 - wc) * ru_pool)
-        coef2 = wc / n_c + (1 - wc) / N
-        # Var of v2: synthetic SD -> MAD estimate (q^2 / 2n) + pool reference (MAD of |z|, kap share) + DP noise
-        V2 = q_syn[c] ** 2 / (2 * n_c) + kap * q_syn[c] ** 2 * (np.pi / 2 - 1) / n_c + (wc * s_var / n_c) ** 2
+        coef2 = wc / n_c + (1 - wc) / n_mem
+        # Var of v2: synthetic SD -> MAD estimate (q^2 / 2m) + pool reference (MAD of |z|, kap share) + DP noise
+        V2 = q_syn[c] ** 2 / (2 * m_c) + kap * q_syn[c] ** 2 * (np.pi / 2 - 1) / n_c + (wc * s_var / n_c) ** 2
         V2 = np.maximum(V2, 1e-8)
         T2 = (u2 * v2 / V2).sum(1)
         e2_ = (u2 ** 2 / V2).sum(1)
         t2[i], d2[i] = T2 / np.sqrt(e2_), np.sqrt(e2_) * coef2
         out["trace_T"][i] = (T - np.median(T)) / (T.std() + 1e-12)
-    pi = min(n_syn / N, 0.99)
+    pi = min(n_mem / N, 0.99)
     out["trace_mean_raw"] = log_lr(t1, d1); out["trace_var_raw"] = log_lr(t2, d2)
     out["trace_mean"] = log_lr(*self_calibrate(t1, d1, pi)); out["trace_var"] = log_lr(*self_calibrate(t2, d2, pi))
     out["trace"] = out["trace_mean"] + out["trace_var"]
@@ -214,6 +223,11 @@ def main():
     p.add_argument("--no_dp", action="store_true", help="ablation: ignore the DP noise")
     p.add_argument("--no_clip", action="store_true", help="ablation: ignore the row clipping")
     p.add_argument("--no_shrink", action="store_true", help="ablation: ignore the class-shift shrinkage")
+    p.add_argument("--sigma_from_config", action="store_true",
+                   help="take the mean / spread noise SD from the release's config.json (sigma_mean, sigma_var) instead of "
+                        "from epsilon (for releases whose budget split is not dp_mvn's, e.g. dpmvn_ablation.py)")
+    p.add_argument("--n_member_from_ids", action="store_true",
+                   help="training-set size = len(train ids) (for releases with more or fewer rows than the training set)")
     p.add_argument("--out_csv", required=True)
     a = p.parse_args()
     expr = load_expression(a.counts); lab = load_labels(a.annot, expr.index, a.sample_col, a.label_col)
@@ -235,7 +249,13 @@ def main():
             X = expr.loc[cand, genes].values; y = lab.loc[cand].values.astype(str)
             S = pd.read_csv(fs)[genes].values
             yS = pd.read_csv(os.path.join(sd_, f"synthetic_labels_split_{f}.csv")).iloc[:, 0].values.astype(str)
-            o = trace_scores(X, y, S, yS, eps, q=a.q, use_dp=not a.no_dp, use_clip=not a.no_clip, use_shrink=not a.no_shrink)
+            kw = {}
+            if a.sigma_from_config:
+                info = json.load(open(os.path.join(sd_, "config.json")))["folds"][str(f)]["info"]
+                kw.update(sigma_mean=info["sigma_mean"], sigma_var=info["sigma_var"])
+            if a.n_member_from_ids:
+                kw["n_member"] = len(ids["train"])
+            o = trace_scores(X, y, S, yS, eps, q=a.q, use_dp=not a.no_dp, use_clip=not a.no_clip, use_shrink=not a.no_shrink, **kw)
             names = ["trace", "trace_mean", "trace_var", "trace_mean_raw", "trace_var_raw", "trace_T"]
             for nm in names:
                 rows.append({"run": run, "fold": f, "eps": eps, "k": o["k"], "score": nm, "auc": roc_auc_score(mem, o[nm]),

@@ -131,3 +131,50 @@ python models/CopulaGen/dpmvn_trace_attack.py --counts $BRCA_TSV --annot $BRCA_A
 Per-record scores (`trace`, `trace_mean`, `trace_var`, ...) are written next to `--out_csv` as
 `<out>_<run>_f<fold>_scores.csv`, with columns sample_id / score / member, so they can be fused with the other attacks.
 It needs `dp_mvn.py` on the path for the accounting, and falls back to an identical local copy if it is missing.
+
+## Stage ablation: which step's noise buys the privacy? (`dpmvn_ablation.py`)
+
+DP-MVN noises 7 releases: n (class counts), clip (4 clipping-threshold histograms), anchor (per-gene centre and scale),
+mean (class sums), var (class MAD sums), basis (DP-PCA Gram matrix) and ccov (class factor covariances).
+
+A variant switches some steps' noise off by giving them an effectively infinite budget share.  The steps that stay
+noisy keep the noise SD they have at the nominal ε, and the exact same noise realisation, so the variants are paired.
+The `base` variant reproduces the ε=30 release to within 1e-14.
+
+* **Attacks.**  The tracing attack is given each variant's true noise SDs (`--sigma_from_config`).  The other attacks
+  are MahalaMIA, DCR, DCR ratio, DOMIAS and marginal (all from `eval_suite.py`), MAMA-lite 4 / 10 bins and kNN-LR.
+* **Scripts and results.**  Evaluation driver `dpmvn_ablation_eval.sh`, table script `dpmvn_ablation_table.py`.
+  Results are in `results_copula/ABLATION/BRCA_ablation.md`, with per-variant summaries in
+  `ABLATION/BRCA*/ablation_summary.csv`.
+
+BRCA, 5 folds; tracing AUC, with the mean and spread channels in brackets:
+
+| ε=30 | Tracing | Change | Utility it costs (base vs noise off) |
+|---|---|---|---|
+| base | 0.737 (0.720 / 0.627) | | |
+| var noise off | 0.813 (0.721 / **0.769**) | **+0.075** | almost none: W1 0.098 vs 0.091, KL 0.399 vs 0.354; F1 and DE unchanged |
+| mean noise off | 0.778 (**0.766** / 0.623) | +0.041 | the largest: TSTR F1 0.673 vs 0.767, DE TPR 0.786 vs 0.892 |
+| basis noise off (k_eff 3 → 30) | 0.765 | +0.028 | within-subtype corr 0.557 vs 0.697 |
+| anchor / n / clip / ccov noise off | 0.737-0.745 | ≤ +0.008 | none beyond fold noise |
+| no noise at all | 0.888 (0.856 / 0.745) | +0.151 | |
+| only mean / only basis / only var noisy | 0.828 / 0.828 / 0.873 | −0.060 / −0.060 / −0.014 vs no noise | |
+| base, 10× synthetic rows | 0.760 | +0.023 | |
+
+At ε=10 the result is the same: var off +0.118, mean off +0.058, anchor off +0.013, basis off −0.011, the rest ±0.001.
+
+* **The privacy comes from the two per-gene moment steps, and they are complementary.**  Each step's noise protects
+  only its own channel.  For example, only-mean at ε=10 brings the mean channel to 0.631 (the base value) while the
+  spread channel stays at 0.759.  The attack adds the two channels, so leaving either one un-noised opens it.  The
+  leave-one-out increments roughly add up to the total (0.16 vs 0.15).
+* **Per unit of budget, var noise is the best buy.**  At a 12 % share it gives the largest single protection at almost
+  no utility cost.  Mean noise (45 % share) protects less than half as much and is the main utility cost of DP-MVN.
+* **Basis noise protects through structure, not through the noise itself.**  The noisier Gram matrix keeps only
+  k_eff = 3 factors, and a low-rank release weakens the mean channel.  That matters at ε=30 but not at ε=10, where
+  k_eff is already 1.
+* **n, anchor, clip and ccov (23 % of the budget) give no measurable privacy against these attacks.**  They still need
+  noise for the formal guarantee, but their shares could shrink and the freed budget go to mean and var.
+* **The other attacks hardly react to the ablation**: their strongest (MAMA-lite) is 0.570 with full noise and 0.616
+  with none, so tracing is the binding attack in every variant.  The finite synthetic sample is a modest defence
+  (10× rows: +0.023).
+* **Caveat**: a variant with any step noiseless is not DP at any finite ε.  These are empirical-privacy measurements
+  against this attack suite.  MeLoMIA-ND (GPU) was not run on the variants.
