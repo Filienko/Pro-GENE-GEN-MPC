@@ -1,0 +1,364 @@
+%%%%%%%% ICML 2026 LATEX SUBMISSION FILE (structure follows evo-mia/writeup.tex) %%%%%%%%%%%%%%%%%
+
+\documentclass{article}
+
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+% Attempt to make hyperref and algorithmic work together better:
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+% Use the following line for the initial blind version submitted for review:
+\usepackage{icml2026}
+% For preprint, use
+% \usepackage[preprint]{icml2026}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{url}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algpseudocodex}
+\usepackage[capitalize,noabbrev]{cleveref}
+
+%%%%%%%%%%%%%%%%
+% Our commands
+%%%%%%%%%%%%%%%%
+\newcommand{\sikha}[1]{\textcolor{blue}{#1}}
+\newcommand{\martine}[1]{\textcolor{magenta}{Martine: #1}}
+\newcommand{\daniil}[1]{\textcolor{teal}{#1}}
+
+% Names of the generators and of the attack; change them here to rename them everywhere.
+\newcommand{\dpmvn}{DP-MVN}
+\newcommand{\ours}{TRACE-MIA}
+
+\usepackage[textsize=tiny]{todonotes}
+
+\icmltitlerunning{Membership Inference Attack on DP-MVN}
+
+\begin{document}
+
+\twocolumn[
+  \icmltitle{Trace Amounts: \\
+    Membership Inference Attack on Differentially Private \\ Gaussian Synthetic Gene Expression Data}
+
+  % TODO: author list
+  \begin{icmlauthorlist}
+    \icmlauthor{Daniil Filienko}{yyy}
+    \icmlauthor{Sikha Pentyala}{yyy}
+    \icmlauthor{Martine De Cock}{yyy}
+  \end{icmlauthorlist}
+
+  \icmlaffiliation{yyy}{University of Washington Tacoma, Tacoma, USA}
+  \icmlcorrespondingauthor{Daniil Filienko}{daniilf@uw.edu}
+
+  \icmlkeywords{Membership Inference Attack, Synthetic Data Generation, Differential Privacy, Gene Expression}
+
+  \vskip 0.3in
+]
+
+\printAffiliationsAndNotice{}
+
+\begin{abstract}
+Synthetic Data Generation (SDG) is an actively studied way to enable safe sharing of private gene expression data more broadly. Multivariate normal (MVN) generators are a simple and fast baseline that performs very well in the CAMDA challenge for synthetic bulk RNA-seq data, but in their basic form they leak the membership of every patient. We describe \dpmvn{}, a differentially private (DP) MVN generator that releases per-class means, per-gene spreads and a low-rank covariance through Gaussian mechanisms, and that is resistant to existing membership inference attacks (MIA) at a privacy budget as large as $\varepsilon=100$. Yet formal DP guarantees at large $\varepsilon$ say little about the practical susceptibility of the released data to adversarial attacks. In this work, we introduce \ours{}, an MIA tailored to \dpmvn{}. It adapts the genomic tracing attack to synthetic data: every private instance nudges the released class mean towards itself in all genes at once, and the attack tests for this nudge with the release's own noise model. \ours{} reaches an AUC of $0.737$ at $\varepsilon=30$ and $0.842$ at $\varepsilon=100$ on TCGA breast cancer data, where the strongest existing attack reaches $0.569$ and $0.598$, and \dpmvn{} stays below an AUC of $0.6$ only for $\varepsilon\le 8$. An ablation of the steps of \dpmvn{} shows that almost all of its empirical privacy comes from the noise on two of its seven releases.
+\end{abstract}
+
+A multivariate normal (MVN) generator, which samples every class from a Gaussian with the class mean and covariance of the private data, is a simple and fast baseline that performs very well in the CAMDA health privacy challenge for synthetic bulk RNA-seq data \cite{menzies2025}: on TCGA breast cancer data it matches tabular foundation models such as TabPFN \cite{hollmann2025tabpfn} in classification utility and in the recovery of differentially expressed genes (Table~\ref{tab:utility}). It has, however, been successfully attacked by Golob et al.~\cite{golob2026synthetic}. Since every class has fewer patients than genes, the synthetic data of MVN lies in the span of the members of its class, and the Mahalanobis distance to the synthetic data (MahalaMIA) identifies every member (Table~\ref{tab:results-other}). We describe \dpmvn{}, a differentially private (DP) MVN generator that closes this leak, and \ours{}, a membership inference attack (MIA) tailored to it. \ours{} transfers the genomic tracing attack \cite{homer2008resolving, dwork2015robust} from released statistics to released synthetic data, and shows that \dpmvn{}, which existing attacks cannot break below $\varepsilon=100$, leaks membership at every $\varepsilon$ above $8$.
+
+\section{Methodology}
+
+\paragraph{Formal problem description and threat model.}
+We consider a data curator who holds a private dataset $D=\{(x_1,y_1),\dots,(x_n,y_n)\}$ of $n$ patients, where $x_i\in\mathbb{R}^d$ is the expression of $d$ genes and $y_i$ is a class label, e.g.\ the cancer subtype. The curator's goal is to release a synthetic dataset $D_\text{syn}$ with instances that look similar to $D$ without leaking sensitive information about individual instances in $D$. We write $n_c$ for the number of private instances of class $c$.
+
+For a target instance $x$ with class $y$, adversary $\mathcal{A}$ computes a score $s$ estimating whether $x\in D$. The adversary has access to the released $D_\text{syn}$, the generator and its hyperparameters, including the privacy budget $(\varepsilon,\delta)$ from which the noise standard deviations of \dpmvn{} follow, and the size $n$ of the private dataset.\footnote{Following Kerckhoffs's principle, we treat all mechanism parameters as public. In our experiments $n$ is also the number of synthetic rows.} We evaluate the attack on a target set $D_{\mathrm{target}} = M \cup \bar{M}$ of \emph{members} $M\subseteq D$ and \emph{non-members} $\bar{M}$, held-out instances drawn from the same distribution, with their class labels, as in the CAMDA challenge \cite{menzies2025}. Unlike most MIAs, the adversary needs no separate auxiliary dataset: it uses $D_\mathrm{target}$ itself, without the membership labels, as its reference population. Attack quality is the ROC-AUC of the scores $s$ against the membership labels.
+
+\subsection{MVN}
+The MVN generator of the CAMDA challenge estimates the mean $\bar x_c$ and covariance $\hat\Sigma_c$ of every class $c$ from $D$ and samples
+\begin{equation}
+  x \;\sim\; \mathcal{N}\big(\bar x_c,\ (1+\lambda)\,\hat\Sigma_c\big),
+  \label{eq:mvn}
+\end{equation}
+i.e.\ a Gaussian draw with additive noise $\mathcal{N}(0,\lambda\hat\Sigma_c)$, with $\lambda=0.7$. MVN is not private. Since every class has fewer instances than genes ($n_c<d$), $\hat\Sigma_c$ has rank $n_c-1$, and every synthetic instance lies in the affine span of the members of its class. A member lies in this span as well, a non-member does not, and the Mahalanobis distance to the synthetic data separates the two perfectly (MahalaMIA, Table~\ref{tab:results-other}).
+
+\subsection{\dpmvn{}}
+\dpmvn{} (Algorithm~\ref{alg:dpmvn}) fits, per class $c$, a Gaussian with a low-rank plus diagonal covariance on standardized values $z=(x-a)/b$:
+\begin{equation}
+  z \mid c \;=\; \mu_c + W^\top f + e, \qquad f\sim\mathcal N(0,S_c),\quad e\sim\mathcal N(0,\mathrm{diag}\,\psi_c),
+  \label{eq:dpmvn-model}
+\end{equation}
+where $W$ is a $k_\mathrm{eff}\times d$ basis shared by all classes. The model has full rank for every class, so its synthetic data does not lie in the span of the members, which removes the leak of MVN. Every parameter is estimated from a clipped sum of the private instances with Gaussian noise added. Here $\mathrm{clip}(v, C) = v\min(1, C/\lVert v\rVert)$ scales a vector to norm at most $C$, and the clipping thresholds $C$ are themselves noisy $75\%$ quantiles of the row norms.
+
+\begin{algorithm}[h]
+\caption{\dpmvn{}: differentially private multivariate normal synthetic data}
+\label{alg:dpmvn}
+\begin{algorithmic}[1]
+\Require private dataset $D$; privacy budget $(\varepsilon,\delta)$; budget share $w_s$ of every step $s$; maximum number of factors $k$
+\State $\sigma_s \gets \Delta_s / \sqrt{2\rho\, w_s}$ for every step $s$
+    \Comment{noise standard deviations}
+\State $\hat n_c \gets n_c + \mathcal N(0,\sigma_n^2)$ for every class $c$
+    \Comment{class counts}
+\State $(a, b) \gets$ centre and scale of every gene from noisy per-gene histograms;\quad $z_i \gets (x_i - a)/b$
+\State $\mu_c \gets \frac{1}{\hat n_c}\big(\sum_{i: y_i = c} \mathrm{clip}(z_i, C_z) + \mathcal N(0, \sigma_\mathrm{mean}^2 I)\big)$
+    \Comment{class means}
+\State $\tau_c \gets \frac{1}{\hat n_c}\big(\sum_{i: y_i = c} \mathrm{clip}(|z_i - \mu_c|, C_u) + \mathcal N(0, \sigma_\mathrm{var}^2 I)\big)$
+    \Comment{per-gene spread}
+\State $W \gets$ eigenvectors of $\sum_i g_i g_i^\top + E$ above the noise level, with $g_i = \mathrm{clip}(z_i - \mu_{y_i}, C_g)$
+    \Comment{factor basis}
+\State $S_c \gets \frac{1}{\hat n_c}\big(\sum_{i: y_i = c} f_i f_i^\top + E_c\big)$, with $f_i = \mathrm{clip}(W(z_i - \mu_c), C_s)$
+    \Comment{factor covariance}
+\State $\psi_c \gets \frac{\pi}{2}\tau_c^2 - \mathrm{diag}(W^\top S_c W)$
+    \Comment{residual variance}
+\State \Return $\hat n_c$ instances $a + b\,(\mu_c + W^\top f + e)$ of every class $c$, with $f$ and $e$ as in Eq.~\eqref{eq:dpmvn-model}
+\end{algorithmic}
+\end{algorithm}
+
+Algorithm~\ref{alg:dpmvn} spends its budget on seven Gaussian releases. On Line 1, $\Delta_s$ is the sensitivity of step $s$ and $\rho$ is the largest budget for which the composition of all seven releases is $(\varepsilon,\delta)$-DP. On Lines 2--3 the curator releases the class counts and the per-gene histograms from which the centre $a$ and scale $b$ of each gene are read. Lines 4--5 release the per-class sums of the standardized instances and of their absolute deviations from the class mean; the mean absolute deviation $\tau_c$ is converted to a variance on Line 8. Line 6 estimates the shared factor basis $W$ with DP-PCA, where $E$ is symmetric Gaussian noise, and keeps only the $k_\mathrm{eff}\le k$ directions whose eigenvalue clears the noise; Line 7 estimates the covariance of the factors per class. On Line 9, the synthetic instances are drawn from Eq.~\eqref{eq:dpmvn-model} and clipped to the range of the data. Before Line 9, the noisy class shifts $\mu_c - \bar\mu$ are shrunk towards the pooled mean $\bar\mu$ per gene, and the class covariances $S_c$ and spreads $\tau_c$ towards their pooled counterparts, more strongly for small classes. These steps, like the eigen-decompositions, are post-processing.
+
+\paragraph{Privacy accounting.}
+Each private instance belongs to one class, so the per-class sums of one step together have the same sensitivity as one pooled sum: $\Delta = 1$ for the counts and each clipping histogram, $\sqrt d$ for the gene histograms, $C_z$ and $C_u$ for the sums of Lines 4--5, and $C_g^2$ and $C_s^2$ for the Gram matrices of Lines 6--7. A composition of Gaussian mechanisms with sensitivity-to-noise ratios $\Delta_s/\sigma_s$ is a Gaussian mechanism with ratio $(\sum_s \Delta_s^2/\sigma_s^2)^{1/2}$ \cite{dong2022gaussian}, which we convert to $(\varepsilon,\delta)$ with the exact Gaussian mechanism \cite{balle2018improving}. Hence \dpmvn{} is $(\varepsilon,\delta)$-DP with respect to $D$ for add/remove-one neighbours. We use $\delta=10^{-5}$ and the budget shares $w$ of $0.45$ for the class means, $0.20$ for the basis, $0.12$ for the spreads, $0.10$ for the factor covariances, $0.08$ for the gene histograms, $0.03$ for the clipping thresholds and $0.02$ for the counts.
+
+\subsection{\ours{}}
+
+\begin{algorithm}[h]
+\caption{\ours{}: Membership inference for a single target instance}
+\label{alg:trace-mia}
+\begin{algorithmic}[1]
+\Require target instance $x$ of class $c$; synthetic data $D_\text{syn}$; target set $D_\mathrm{target}$; number $n_c$ of private instances of class $c$; noise standard deviation $\sigma_\mathrm{mean}$
+\State $m_c \gets$ mean of the synthetic instances of class $c$
+    \Comment{released class mean}
+\State $\Sigma_\mathrm{syn} \gets$ covariance of the synthetic instances of class $c$, with $\hat k$ factors
+    \Comment{as in Eq.~\eqref{eq:dpmvn-model}}
+\State $\Sigma \gets (1+\kappa)\,\Sigma_\mathrm{syn}/n_c + \mathrm{diag}(\sigma_\mathrm{mean}\, b / n_c)^2$
+    \Comment{noise of $m_c$}
+\State $r \gets$ mean of $\mathrm{clip}(x')$ over all $x' \ne x$ of class $c$ in $D_\mathrm{target}$
+    \Comment{reference, without $x$}
+\State $u \gets \mathrm{clip}(x) - r$;\quad $v \gets m_c - r$
+    \Comment{residuals of the target and of the release}
+\State $t \gets u^\top \Sigma^{-1} v \,/\, \sqrt{u^\top \Sigma^{-1} u}$
+    \Comment{$\mathcal N(0, 1)$ if $x \notin D$}
+\State $\delta_x \gets \sqrt{u^\top \Sigma^{-1} u}\,/\,n_c$
+    \Comment{shift of $t$ if $x \in D$}
+\State \Return $s = \delta_x\, t - \delta_x^2/2$
+    \Comment{log-likelihood ratio}
+\end{algorithmic}
+\end{algorithm}
+
+The insights underlying our attack are based on the observation that \dpmvn{}, like every MVN generator, is fundamentally a release of class means. The mean $\mu_c$ of class $c$ is the clipped sum of its members divided by $n_c$, plus noise, so a member $x$ moves it by $\mathrm{clip}(x)/n_c$ relative to a release without $x$. The synthetic data reproduces $\mu_c$ up to sampling noise. Thus, an adversary who compares the deviation $u$ of the target from a reference population with the deviation $v$ of the synthetic class mean from the same reference can estimate the membership of $x$: if $x\in D$, then $v$ contains $u/n_c$, and the two point in the same direction slightly more often than chance in every gene. A more formal description of our method can be found in Algorithm~\ref{alg:trace-mia}.
+
+On Line 1 the adversary computes the synthetic class mean $m_c$. Line 2 fits the covariance of the synthetic instances of class $c$ with the same low-rank plus diagonal structure as Eq.~\eqref{eq:dpmvn-model}, where the number of factors $\hat k$ is read off the spectrum of the synthetic data (Appendix~\ref{app:attack}). Line 3 gives the covariance of the noise of $m_c$: the sampling noise of a mean of $n_c$ synthetic instances, the noise of the reference ($\kappa=|\bar M|/|D_\mathrm{target}|$ is the share of non-members, which the reference averages in), and the DP noise of the class means, which follows from $\varepsilon$. Line 4 computes the reference $r$ as the mean of the other targets of class $c$, where $\mathrm{clip}(x)=a+b\,\mathrm{clip}(z, C_z)$ repeats the clipping of \dpmvn{}, with $a$, $b$ and $C_z$ recomputed on $D_\mathrm{target}$. Since $r$ does not contain $x$, but $m_c$ does if $x$ is a member, the residuals of Line 5 share the component $u/n_c$ only for members. Line 6 computes the whitened inner product of the two residuals and divides it by its standard deviation under $H_0$ ($x\notin D$), so that $t\sim\mathcal N(0,1)$ for every non-member. Under $H_1$ ($x\in D$), $v$ contains $u/n_c$ and $t$ is shifted by $\delta_x$ (Line 7). Line 8 returns the Gaussian log-likelihood ratio, which makes scores comparable across classes and targets: a target with a large deviation, in a small class, carries a larger shift.
+
+Since the noise $\Sigma$ of Line 3 shrinks with $n_c$, the shift of a member grows with the number of genes. If the synthetic data matches the within-class variance $\sigma^2$ of the private data in every gene, then $u^\top\Sigma^{-1}u \approx d\,n_c\sigma^2/(\sigma^2+\sigma_\mathrm{mean}^2/n_c)$ and
+\begin{equation}
+  \delta_x^2 \;\approx\; \frac{d\,\sigma^2}{n_c\,\sigma^2 + \sigma_\mathrm{mean}^2},
+  \label{eq:shift}
+\end{equation}
+which ignores the reference noise and the correlation between genes. For $d=978$ genes and $n_c$ in the hundreds, a member's statistic is shifted by more than one standard deviation unless $\sigma_\mathrm{mean}^2$ is comparable to $n_c\sigma^2$. At $\varepsilon=30$, \dpmvn{} has $\sigma_\mathrm{mean}=11.4$ (in standardized units) against $\sqrt{n_c}\,\sigma\approx 21\,\sigma$ for the largest class of our data.
+
+\paragraph{Following the mechanism.}
+Algorithm~\ref{alg:trace-mia} is the core of \ours{}. The full attack follows \dpmvn{} in three more ways, described in Appendix~\ref{app:attack}. First, a member's weight in the released mean of gene $g$ is reduced by the shrinkage of the class shifts towards the pooled mean; the adversary recomputes this shrinkage from the synthetic class shifts and weights $u$ accordingly. Second, Lines 1--8 are repeated with the absolute deviations $|z-\mu_c|$ against the synthetic per-gene spread, which targets the release of Line 5 of Algorithm~\ref{alg:dpmvn}; the two log-likelihood ratios are added. Third, both statistics are calibrated on $D_\mathrm{target}$ before they are added: since the share of members in $D_\mathrm{target}$ is known, the mean and variance of $t$ over all targets reveal whether the noise model of Line 3 under- or overestimates the noise, and $t$ and $\delta_x$ are rescaled accordingly.
+
+\section{Experiments and Results}
+We evaluate \ours{} on the bulk RNA-seq data of the CAMDA health privacy challenge \cite{menzies2025}: $1{,}089$ TCGA breast cancer patients \cite{weinstein2013tcga} with the variance-stabilized expression \cite{love2014deseq2} of the $978$ L1000 landmark genes \cite{subramanian2017l1000} and $5$ PAM50 subtypes (LumA $562$, LumB $217$, Basal $188$, Her2 $82$, Normal $40$ patients). We use the $5$ CAMDA splits, each with $871$ members and $218$ non-members, and report the mean and standard deviation over the splits.\footnote{The settings of \ours{} were fixed on the third split only.} We compare against GAN-Leaks \cite{chen2020gan}, MahalaMIA and MeLoMIA-ND \cite{golob2026synthetic}, the latter with NoisyDiffusion \cite{kreuer2025noisydiffusion} shadow generators, MAMA-MIA \cite{golob_privacy_2025} and kNN-LR, a generator-aware attack we developed for TabPFN generators.\footnote{kNN-LR scores a target by how well the synthetic instances that agree with it on a random subset of genes predict its remaining genes, relative to the other targets.} Utility is the accuracy and macro-F1 of a logistic regression trained on synthetic and tested on real data (TSTR), and the true and false positive rates of the differentially expressed genes recovered from the synthetic data (DE TPR / FPR). Fidelity is the mean per-gene Wasserstein distance (W1) and the KL divergence of the CAMDA evaluator.
+
+\ours{} is the strongest attack on \dpmvn{} at every privacy budget above $\varepsilon=1$ (Table~\ref{tab:results-dpmvn}). At $\varepsilon=30$ it reaches an AUC of $0.737$, where the strongest existing attack, MAMA-MIA, reaches $0.566$, and it identifies $11\%$ of the members at a false positive rate of $1\%$. The gap grows with $\varepsilon$: without meaningful noise ($\varepsilon=10{,}000$), \ours{} reaches $0.889$, while the existing attacks level off at $0.52$--$0.64$. With the bar of an AUC below $0.6$ that the CAMDA challenge uses, \dpmvn{} is acceptable only at $\varepsilon\le 8$ ($0.601$ at $\varepsilon=8$, $0.539$ at $\varepsilon=5$), where the strongest existing attack would have allowed $\varepsilon=100$. At $\varepsilon\le 1$ all attacks are at chance level.
+
+\begin{table*}[!h]
+\centering
+\caption{MIA AUC on \dpmvn{} (TCGA-BRCA, mean $\pm$ standard deviation over the 5 CAMDA splits). The last row is the true positive rate of \ours{} at a false positive rate of $1\%$. Baselines other than GAN-Leaks were not run at $\varepsilon=5$.}
+\label{tab:results-dpmvn}
+\small
+\begin{tabular}{lccccccc}
+\toprule
+ & \multicolumn{7}{c}{AUC by privacy budget $\varepsilon$} \\
+\cmidrule(lr){2-8}
+Method & $10{,}000$ & $1{,}000$ & $100$ & $30$ & $10$ & $5$ & $1$ \\
+\midrule
+GAN-Leaks      & $0.519\pm0.016$ & $0.517\pm0.014$ & $0.510\pm0.015$ & $0.509\pm0.014$ & $0.504\pm0.015$ & $0.501\pm0.017$ & $0.499\pm0.024$ \\
+MahalaMIA      & $0.553\pm0.014$ & $0.547\pm0.013$ & $0.519\pm0.018$ & $0.506\pm0.011$ & $0.503\pm0.017$ & -- & $0.495\pm0.015$ \\
+MAMA-MIA       & $0.602\pm0.012$ & $0.603\pm0.021$ & $0.594\pm0.014$ & $0.566\pm0.021$ & $0.561\pm0.028$ & -- & $0.503\pm0.017$ \\
+kNN-LR         & $0.582\pm0.020$ & $0.580\pm0.018$ & $0.548\pm0.016$ & $0.526\pm0.021$ & $0.515\pm0.020$ & -- & $0.502\pm0.020$ \\
+MeLoMIA-ND     & $0.644\pm0.014$ & $0.627\pm0.018$ & $0.540\pm0.016$ & $0.522\pm0.011$ & $0.510\pm0.011$ & -- & $\mathbf{0.507\pm0.011}$ \\
+\ours{} (ours) & $\mathbf{0.889\pm0.018}$ & $\mathbf{0.886\pm0.016}$ & $\mathbf{0.842\pm0.023}$ & $\mathbf{0.737\pm0.018}$ & $\mathbf{0.633\pm0.010}$ & $\mathbf{0.539\pm0.012}$ & $0.503\pm0.025$ \\
+\midrule
+\ours{} TPR@1\%FPR & $0.337$ & $0.350$ & $0.303$ & $0.111$ & $0.042$ & $0.020$ & $0.013$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Table~\ref{tab:results-other} applies \ours{} to other generators, unchanged except for the noise model. It also breaks two TabPFN-3.5 generators that were designed to resist the existing attacks: TabPFN prompted with \dpmvn{} synthetic data at $\varepsilon=30$ ($0.670$, formally $\varepsilon=30$ DP by post-processing), and TabPFN prompted with a hybrid of real-derived cluster means and \dpmvn{} rows ($0.735$, against $0.564$ for the strongest existing attack). Both carry class means of the private data into their prompt, noisy in the first case and exact (as cluster means) in the second. On MVN and on TabPFN prompted with the real data, \ours{} is weaker than the strongest existing attack. The leak of MVN is its rank-deficient covariance rather than its means, and we hypothesize that TabPFN leaks individual instances more than means. Private-PGM \cite{mckenna2019graphical} is close to chance under every attack.
+
+\begin{table*}[!h]
+\centering
+\caption{MIA AUC on other generators (TCGA-BRCA, mean $\pm$ standard deviation over the 5 CAMDA splits). The TabPFN hybrid prompt consists of $65\%$ means of clusters of $5$ real patients with \dpmvn{}-shaped jitter and $35\%$ \dpmvn{} $\varepsilon=30$ instances.}
+\label{tab:results-other}
+\small
+\begin{tabular}{lcccccc}
+\toprule
+Generator & GAN-Leaks & MahalaMIA & MAMA-MIA & kNN-LR & MeLoMIA-ND & \ours{} (ours) \\
+\midrule
+MVN (not DP)                              & $0.529\pm0.012$ & $\mathbf{1.000\pm0.000}$ & $0.514\pm0.021$ & $0.543\pm0.019$ & $0.924\pm0.023$ & $0.661\pm0.038$ \\
+TabPFN-3.5, real prompt (not DP)          & $0.525\pm0.015$ & $0.579\pm0.016$ & $0.616\pm0.039$ & $0.693\pm0.029$ & $\mathbf{0.723\pm0.033}$ & $0.708\pm0.008$ \\
+TabPFN-3.5, hybrid prompt (not DP)        & $0.513\pm0.014$ & $0.525\pm0.013$ & $0.564\pm0.021$ & $0.542\pm0.019$ & $0.545\pm0.010$ & $\mathbf{0.735\pm0.016}$ \\
+TabPFN-3.5, \dpmvn{} prompt ($\varepsilon=30$) & $0.504\pm0.013$ & $0.507\pm0.015$ & $0.563\pm0.019$ & $0.521\pm0.018$ & $0.517\pm0.013$ & $\mathbf{0.670\pm0.018}$ \\
+Private-PGM ($\varepsilon=10$)            & $0.503\pm0.019$ & $0.504\pm0.022$ & $0.512\pm0.029$ & $0.511\pm0.021$ & $0.506\pm0.023$ & $\mathbf{0.542\pm0.021}$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Notably, it appears that high utility and low leakage cannot be had at the same time with \dpmvn{} (Table~\ref{tab:utility}). At $\varepsilon\ge 100$, \dpmvn{} matches or exceeds MVN and TabPFN-3.5 in TSTR and DE recovery, but its AUC under \ours{} is above $0.84$. At $\varepsilon=8$, the largest budget at which it stays below $0.6$, it loses $0.05$ accuracy and $0.19$ macro-F1 relative to $\varepsilon=100$ and recovers only $57\%$ of the DE genes. It still has a lower W1, KL divergence and DE false positive rate than Private-PGM at $\varepsilon=10$, at a similar macro-F1.
+
+\begin{table}[h]
+\centering
+\caption{Utility and fidelity on TCGA-BRCA (mean over the 5 CAMDA splits). Real data: TSTR accuracy $0.857$ and macro-F1 $0.771$ when training on the real members. The KL divergence of Private-PGM is large because it releases binned values.}
+\label{tab:utility}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccccc}
+\toprule
+Generator & Acc & F1 & W1 & KL & DE TPR / FPR & \ours{} \\
+\midrule
+MVN                          & 0.840 & 0.746 & 0.199 & 0.217 & 0.870 / 0.038 & 0.661 \\
+TabPFN-3.5, real             & 0.834 & 0.734 & 0.084 & 0.214 & 0.832 / 0.027 & 0.708 \\
+TabPFN-3.5, hybrid           & 0.845 & 0.740 & 0.096 & 0.341 & 0.868 / 0.038 & 0.735 \\
+TabPFN-3.5, \dpmvn{} $30$    & 0.832 & 0.678 & 0.103 & 0.394 & 0.744 / 0.036 & 0.670 \\
+\midrule
+\dpmvn{} $\varepsilon=1{,}000$ & 0.852 & 0.771 & 0.089 & 0.350 & 0.879 / 0.025 & 0.886 \\
+\dpmvn{} $\varepsilon=100$   & 0.847 & 0.740 & 0.093 & 0.382 & 0.867 / 0.035 & 0.842 \\
+\dpmvn{} $\varepsilon=30$    & 0.831 & 0.673 & 0.098 & 0.399 & 0.786 / 0.042 & 0.737 \\
+\dpmvn{} $\varepsilon=10$    & 0.799 & 0.593 & 0.129 & 0.499 & 0.622 / 0.060 & 0.633 \\
+\dpmvn{} $\varepsilon=8$     & 0.796 & 0.555 & 0.151 & 0.558 & 0.566 / 0.070 & 0.601 \\
+\dpmvn{} $\varepsilon=5$     & 0.768 & 0.497 & 0.320 & 0.930 & 0.347 / 0.129 & 0.539 \\
+\dpmvn{} $\varepsilon=1$     & 0.399 & 0.293 & 4.824 & 3.647 & 0.375 / 0.356 & 0.503 \\
+\midrule
+Private-PGM $\varepsilon=10$ & 0.784 & 0.522 & 0.244 & 18.50 & 0.640 / 0.137 & 0.542 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Discussion}
+
+\paragraph{Which step of \dpmvn{} provides the privacy?}
+We switch off the noise of one step of Algorithm~\ref{alg:dpmvn} at a time, keeping the noise of all other steps, including its random draws, exactly as in the release at the nominal $\varepsilon$ (Table~\ref{tab:ablation}). Without any noise, \ours{} reaches $0.888$; the noise of \dpmvn{} at $\varepsilon=30$ brings it down to $0.737$. Almost all of this comes from two steps. Without the noise on the per-gene spreads (Line 5), the AUC rises by $0.075$ at $\varepsilon=30$ and by $0.118$ at $\varepsilon=10$; without the noise on the class means (Line 4), it rises by $0.041$ and $0.058$. The noise of the DP-PCA basis (Line 6) helps only at $\varepsilon=30$, and indirectly: it leaves $k_\mathrm{eff}=3$ factors instead of $30$, and a low-rank release weakens the class-mean signal. The noise of the counts, gene histograms, clipping thresholds and factor covariances, together $23\%$ of the budget, has no measurable effect.
+
+The two important steps protect two different channels. With noise on the class means only, the class-mean part of \ours{} drops to the level of the full release, but the spread part does not, and the attack takes the stronger channel. Neither step alone is enough. The noise on the spreads is also the cheaper one: switching it off barely changes utility (W1 $0.098\to0.091$), while switching off the noise on the class means raises the macro-F1 from $0.673$ to $0.767$ and the DE TPR from $0.786$ to $0.892$.
+
+\begin{table}[h]
+\centering
+\caption{\ours{} AUC on \dpmvn{} with the noise of one step switched off (mean over the 5 splits). In brackets: the class-mean and the spread part of the attack. ``No noise'' switches off all seven steps.}
+\label{tab:ablation}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcc}
+\toprule
+Noise switched off & $\varepsilon=30$ & $\varepsilon=10$ \\
+\midrule
+none (release)              & $0.737$ \,($0.720$ / $0.627$) & $0.633$ \,($0.633$ / $0.546$) \\
+spreads (Line 5)            & $0.813$ \,($0.721$ / $0.769$) & $0.752$ \,($0.634$ / $0.729$) \\
+class means (Line 4)        & $0.778$ \,($0.766$ / $0.623$) & $0.691$ \,($0.688$ / $0.550$) \\
+basis (Line 6)              & $0.765$ \,($0.746$ / $0.620$) & $0.622$ \,($0.613$ / $0.549$) \\
+gene histograms (Line 3)    & $0.743$ & $0.646$ \\
+counts (Line 2)             & $0.745$ & $0.634$ \\
+clipping thresholds         & $0.738$ & $0.633$ \\
+factor covariances (Line 7) & $0.737$ & $0.633$ \\
+\midrule
+all (no noise)              & $0.888$ \,($0.856$ / $0.745$) & $0.888$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{\ours{} on MVN.}
+MVN releases exact class means, yet \ours{} reaches only $0.661$ on it ($0.706$ with $100$ factors in Line 2 and without the clipping and shrinkage of \dpmvn{}). The additive noise $\lambda\hat\Sigma_c$ of Eq.~\eqref{eq:mvn} increases the sampling noise of the synthetic class mean by a factor $1+\lambda$, and the covariance of MVN does not have the structure that Line 2 assumes. MVN's main leak is elsewhere: its rank-deficient covariance, which MahalaMIA detects perfectly. \dpmvn{} closes this leak with its full-rank model, which is why MahalaMIA is at $0.55$ even at $\varepsilon=10{,}000$, and leaves the class means as its weak point.
+
+\section{Conclusion and Future Work}
+We introduced \ours{}, a membership inference attack tailored to differentially private multivariate normal synthetic data, which transfers the genomic tracing attack from released statistics to released synthetic data. It shows that \dpmvn{}, which appears private at $\varepsilon=100$ under existing attacks, leaks membership at every $\varepsilon$ above $8$ on bulk RNA-seq data, and that the leak sits in the per-class, per-gene statistics that any MVN generator releases.
+
+In future work, we plan to use the ablation to re-allocate the privacy budget of \dpmvn{}, moving it from the steps that provide no measurable privacy towards the noise on the class means and spreads, and to examine tighter privacy auditing: every step of \dpmvn{} is a Gaussian mechanism on a known sum, so the privacy loss of the target's contribution can be evaluated in closed form. We also intend to evaluate \ours{} on further datasets of the CAMDA challenge.
+
+\section*{Limitation}
+We evaluate our method on one dataset, TCGA-BRCA, which produces results that may not perfectly generalize to other settings. Our threat model assumes that the adversary knows the generator, its privacy budget and the size of the private dataset; without $\varepsilon$, \ours{} still reaches $0.706$ at $\varepsilon=30$ (Appendix~\ref{app:ablation}). The reference population of the attack is the target set itself, which in the CAMDA setting consists of $80\%$ members. Finally, each split was generated with one seed, and the shadow-model attack MeLoMIA-ND was not run on the ablation variants.
+
+% \section*{Acknowledgments}
+% TODO: grants (evo-mia/writeup.tex acknowledges NSF Grant No.~2451163 and No.~2523406; check that they apply).
+
+\newpage
+\bibliographystyle{plain}
+\bibliography{references,refs_additions}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\appendix
+
+\section{Details of \dpmvn{}}
+\label{app:dpmvn}
+
+\paragraph{Centre and scale.}
+Line 3 of Algorithm~\ref{alg:dpmvn} releases, for every gene, a histogram with $25$ unit bins on $[0,25]$, the range of the variance-stabilized expression. Each instance adds one count to one bin of every gene, so the sensitivity is $\sqrt d$. The centre $a$ and scale $b$ of a gene are the mean and the standard deviation of the noisy histogram within $\pm3$ bins of its mode, with $b$ clipped to $[0.4, 2.5]$.
+
+\paragraph{Clipping thresholds.}
+Each of the four thresholds $C_z, C_u, C_g, C_s$ is the $75\%$ quantile of a noisy histogram of the row norms on a fixed logarithmic grid of $140$ bins between $10^{-2}$ and $10^{5}$ (sensitivity $1$ each, sharing the budget of this step). Bins whose noisy count is below $4\sigma$ are set to zero before the quantile is read.
+
+\paragraph{Shrinkage.}
+The noisy shift $D_{cg}=\mu_{cg}-\bar\mu_g$ of class $c$ in gene $g$ has noise variance $e_c^2=(\sigma_\mathrm{mean}/\hat n_c)^2$. We estimate the between-class variance $\tau_g^2$ of every gene by a precision-weighted average of $D_{cg}^2-e_c^2$ over the classes and multiply each shift by $t_{cg}/(t_{cg}+e_c^2)$ with $t_{cg}=\max(\tau_g^2, D_{cg}^2-2e_c^2)$, so that a strong shift of a class is kept even if the gene does not differ between the other classes. The spreads $\tau_c$ are shrunk towards the pooled spread with a weight that grows with $\hat n_c$ and with the signal-to-noise ratio, and the factor covariances $S_c$ towards the pooled factor covariance with weight $\max(0.3,\, k_\mathrm{eff}/\hat n_c,\ \text{noise}/\text{signal})$.
+
+\paragraph{Basis and sampling.}
+Line 6 keeps the eigenvectors whose noisy eigenvalue exceeds $2.1\,\sigma_\mathrm{basis}\sqrt d$, the approximate edge of the spectrum of the noise matrix $E$, with at most $k=30$. The residual variance $\psi_c$ of Line 8 is floored at $5\%$ of the gene's variance. The number of synthetic instances of each class follows from the noisy counts $\hat n_c$, so the release uses no exact count.
+
+\section{Details of \ours{}}
+\label{app:attack}
+
+\paragraph{Number of factors.}
+The synthetic data of \dpmvn{} has a within-class covariance of rank $k_\mathrm{eff}$ plus a diagonal, so the spectrum of its standardized within-class residuals consists of $k_\mathrm{eff}$ separated eigenvalues above a dense, nearly flat bulk. We set $\hat k$ to the first index from which $8$ consecutive eigenvalue ratios $\lambda_j/\lambda_{j+1}$ stay below $1.04$. On our releases $\hat k$ matches $k_\mathrm{eff}$, e.g.\ $3$ at $\varepsilon=30$ and $30$ at $\varepsilon\ge1{,}000$, and it equals $k_\mathrm{eff}$ in all fits of the null control (Appendix~\ref{app:ablation}). The basis is fitted on the residuals of all classes, the factor covariance per class, as in \dpmvn{}.
+
+\paragraph{Noise model.}
+The noise standard deviation of the class means follows from $\varepsilon$ as $\sigma_\mathrm{mean} = C_z/\sqrt{2\rho\,w_\mathrm{mean}}$, with $C_z$ the $75\%$ quantile of the norms of the standardized targets. For a member, the weight of gene $g$ in the released mean is $1/n + s_{cg}(1/n_c - 1/n)$ instead of $1/n_c$, where $s_{cg}$ is the shrinkage factor of Appendix~\ref{app:dpmvn}, recomputed from the synthetic class shifts after subtracting their sampling variance. We multiply $u$ by these weights (relative to $1/n_c$) in Lines 6--7 of Algorithm~\ref{alg:trace-mia}.
+
+\paragraph{Spread statistic.}
+The second part of \ours{} repeats Algorithm~\ref{alg:trace-mia} with $u=|z_x-m_c|-\bar r$, the clipped absolute deviation of the target from the synthetic class mean minus that of the other targets, and $v$ the synthetic per-gene mean absolute deviation ($\sqrt{2/\pi}$ times the synthetic standard deviation) minus the same reference. Its noise model is diagonal: the sampling variance of the synthetic spread, the reference noise, and the DP noise of Line 5 of Algorithm~\ref{alg:dpmvn}, weighted by the shrinkage of the spreads.
+
+\paragraph{Calibration.}
+If $\pi$ is the share of members in $D_\mathrm{target}$ (here $n/|D_\mathrm{target}|$), then under the model of Algorithm~\ref{alg:trace-mia}, $t$ has mean $\pi\,\mathbb E[\delta_x]$ and variance $1+\pi\,\mathbb E[\delta_x^2]-\pi^2\mathbb E[\delta_x]^2$ over $D_\mathrm{target}$. We estimate a scale $\gamma$ of the shift and a scale $\omega$ of the noise from the observed mean and variance of $t$, $\gamma=\bar t/(\pi\,\bar\delta)$ and $\omega^2=\mathrm{Var}(t)-\pi\gamma^2\,\overline{\delta^2}+(\pi\gamma\bar\delta)^2$, and use $t/\omega$ and $\gamma\delta_x/\omega$ in Line 8. This uses no membership labels. It matters for the spread statistic, whose noise model is cruder, and leaves the class-mean statistic almost unchanged.
+
+\section{Ablation Study Results}
+\label{app:ablation}
+
+\paragraph{Null control.}
+We fit \dpmvn{} on $3$ random subsets of $871$ of the $1{,}089$ patients of the third split and score the targets once against the true membership and once against an independent random split into $871$ and $218$. With the true membership, \ours{} reaches $0.878$--$0.895$ at $\varepsilon=1{,}000$ and $0.770$--$0.777$ at $\varepsilon=30$; with the independent split, $0.486$--$0.516$. The attack therefore detects membership and not a property of the target set or of the classes.
+
+\paragraph{Parts of the attack.}
+Table~\ref{tab:abl-attack} removes one part of \ours{} at a time. Modelling the clipping of \dpmvn{} matters most. Without knowledge of $\varepsilon$, i.e.\ without the DP noise in Line 3 of Algorithm~\ref{alg:trace-mia}, the AUC drops by $0.03$ at $\varepsilon=30$ and is unchanged at larger $\varepsilon$.
+
+\begin{table}[h]
+\centering
+\caption{\ours{} AUC with one part of the attack removed (mean over the 5 splits).}
+\label{tab:abl-attack}
+\footnotesize
+\begin{tabular}{lccc}
+\toprule
+ & $\varepsilon=30$ & $\varepsilon=100$ & $\varepsilon=1{,}000$ \\
+\midrule
+\ours{}                        & $0.737$ & $0.842$ & $0.886$ \\
+without the clipping            & $0.671$ & $0.757$ & $0.818$ \\
+without the DP noise ($\varepsilon$ unknown) & $0.706$ & $0.832$ & $0.887$ \\
+without the shrinkage           & $0.740$ & $0.846$ & $0.887$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Noise on one step only.}
+With noise on the class means only, \ours{} reaches $0.828$ at $\varepsilon=30$ and $0.774$ at $\varepsilon=10$; with noise on the basis only, $0.828$ at both; with noise on the spreads only, $0.873$ and $0.860$, against $0.888$ without any noise. The noise on the counts, gene histograms, clipping thresholds or factor covariances alone leaves the AUC between $0.861$ and $0.896$.
+
+\paragraph{Number of synthetic instances.}
+Releasing $10$ times as many synthetic instances reduces the sampling noise of the synthetic class mean and raises the AUC from $0.737$ to $0.760$ at $\varepsilon=30$ and from $0.888$ to $0.929$ without noise.
+
+\paragraph{Per-class clipping thresholds.}
+A variant of \dpmvn{} with clipping thresholds per class instead of pooled ones reaches $0.723$ at $\varepsilon=30$ and $0.813$ at $\varepsilon=100$ under \ours{}, against $0.737$ and $0.842$ for \dpmvn{}. The attack was not adapted: it still models pooled thresholds.
+
+\end{document}
